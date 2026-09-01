@@ -547,8 +547,16 @@
       race.lastInputAt = now;
       race.speed = clamp((race.speed || 0) + 3.4, 0, 150);
     } else {
-      race.speed = clamp((race.speed || 0) * 0.88 - (hasInputRecently ? 0.5 : 2.5), 0, 150);
-      if (race.speed < 0.4) race.speed = 0;
+      race.speed = 0;
+    }
+
+    if (!isAccelerating && (race.speed || 0) <= 0.1) {
+      race.speed = 0;
+      const me = race.players && race.players[state.playerId];
+      if (me) {
+        me.distance = Math.max(0, me.distance || 0);
+      }
+      return;
     }
 
     race.distance = Math.min(TRACK_GOAL, (race.distance || 0) + Math.max(0, race.speed) * 0.24);
@@ -642,6 +650,20 @@
     const race = state.roomData;
     const isAccelerating = state._activeHoldAction === 'up';
     const me = race.players && race.players[state.playerId];
+
+    if (!isAccelerating) {
+      if (me) {
+        me.distance = Math.max(0, me.distance || 0);
+      }
+      if (race.obstacles && Array.isArray(race.obstacles)) {
+        race.obstacles = race.obstacles.filter((o) => o.y < 118);
+      }
+      if (race.rivalCars && Array.isArray(race.rivalCars)) {
+        race.rivalCars = race.rivalCars.filter((c) => c.y < 118);
+      }
+      detectMultiplayerFinishers(race);
+      return;
+    }
 
     multiSpawnObstacles(race);
     race.obstacles = (race.obstacles || [])
@@ -1505,6 +1527,7 @@
         };
         const action = map[event.key];
         if (!action) return;
+        if (event.repeat && action !== 'up') return;
         if (['ArrowLeft', 'ArrowUp', 'ArrowRight', ' '].includes(event.key) && event.preventDefault) event.preventDefault();
         if (state.screen === 'race') handleControlAction(action);
       });
@@ -1659,6 +1682,10 @@
 
     const beginHoldAction = (action) => {
       if (!state.roomData || state.screen !== 'race') return;
+      if (action === 'left' || action === 'right') {
+        handleControlAction(action);
+        return;
+      }
       state._activeHoldAction = action;
       handleControlAction(action);
     };
@@ -1722,8 +1749,8 @@
   }
 
   setInterval(() => {
-    if (state._activeHoldAction && state.mode === 'solo' && state.screen === 'race' && state.roomData && state.roomData.phase === 'racing') {
-      handleControlAction(state._activeHoldAction);
+    if (state._activeHoldAction === 'up' && state.mode === 'solo' && state.screen === 'race' && state.roomData && state.roomData.phase === 'racing') {
+      handleControlAction('up');
     }
     if (state.mode === 'solo' && state.roomData && state.roomData.phase === 'countdown' && state.roomData.startedAt && Date.now() >= state.roomData.startedAt) {
       state.roomData.phase = 'racing';
