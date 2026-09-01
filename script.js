@@ -52,6 +52,7 @@
     _pendingMultiSync: null,
     _lastMultiSyncAt: 0,
     _activeHoldAction: null,
+    _acceleratePressed: false,
     _raceFinishedPersisted: false,
     _cloudSaveDirty: false,
     _toastTimer: null,
@@ -1504,8 +1505,13 @@
   function wireEvents() {
     // Attach global event listeners only once
     if (!_globalEventListenersAttached) {
-      const stopHoldAction = () => {
-        state._activeHoldAction = null;
+      const stopHoldAction = (event) => {
+        const target = event && event.target;
+        const releaseFromUpButton = target && target.closest && target.closest('[data-control="up"]');
+        if (state._activeHoldAction === 'up' && releaseFromUpButton) {
+          state._activeHoldAction = null;
+          state._acceleratePressed = false;
+        }
       };
 
       document.addEventListener('pointerup', stopHoldAction, { passive: true });
@@ -1529,7 +1535,19 @@
         if (!action) return;
         if (event.repeat && action !== 'up') return;
         if (['ArrowLeft', 'ArrowUp', 'ArrowRight', ' '].includes(event.key) && event.preventDefault) event.preventDefault();
+        if (action === 'up') {
+          state._activeHoldAction = 'up';
+          state._acceleratePressed = true;
+        }
         if (state.screen === 'race') handleControlAction(action);
+      });
+
+      window.addEventListener('keyup', (event) => {
+        const key = event.key;
+        if (['ArrowUp', 'w', 'W', ' '].includes(key)) {
+          state._activeHoldAction = null;
+          state._acceleratePressed = false;
+        }
       });
 
       window.addEventListener('beforeunload', () => {
@@ -1676,8 +1694,13 @@
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.onclick = startRace;
 
-    const stopHoldAction = () => {
-      state._activeHoldAction = null;
+    const stopHoldAction = (event) => {
+      const target = event && event.target;
+      const releaseFromUpButton = target && target.closest && target.closest('[data-control="up"]');
+      if (state._activeHoldAction === 'up' && releaseFromUpButton) {
+        state._activeHoldAction = null;
+        state._acceleratePressed = false;
+      }
     };
 
     const beginHoldAction = (action) => {
@@ -1686,7 +1709,8 @@
         handleControlAction(action);
         return;
       }
-      state._activeHoldAction = action;
+      state._acceleratePressed = true;
+      state._activeHoldAction = 'up';
       handleControlAction(action);
     };
 
