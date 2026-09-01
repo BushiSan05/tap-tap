@@ -236,7 +236,7 @@
       state.authErrorMsg = '';
       const credential = await FB.auth.createUserWithEmailAndPassword(email, password);
       if (credential && credential.user && state.playerName.trim()) {
-        try { await credential.user.updateProfile({ displayName: state.playerName.trim() }); } catch (_) {}
+        try { await credential.user.updateProfile({ displayName: state.playerName.trim() }); } catch (_) { }
       }
       await upsertUserProfile();
       showToast('Account created! Welcome.', 'success');
@@ -860,7 +860,7 @@
               highScore: { ...current, [mode]: score }
             }, { merge: true });
           }
-        } catch (_) {}
+        } catch (_) { }
       } catch (err) {
         safeLog('persistRaceResult', err);
       }
@@ -869,7 +869,7 @@
 
   function attachRoomListener(code) {
     if (state.roomRef && state.roomListener) {
-      try { state.roomRef.off('value', state.roomListener); } catch (_) {}
+      try { state.roomRef.off('value', state.roomListener); } catch (_) { }
     }
     if (!FB.db) return;
     state.roomRef = FB.db.ref(roomPath(code));
@@ -1187,8 +1187,8 @@
           `).join('')}
         </div>
         ${state.roomData && state.roomData.hostId === state.playerId
-          ? `<button class="tr-btn tr-btn-grass" id="startBtn" ${roster.length < 2 ? 'disabled' : ''}>${roster.length < 2 ? 'Waiting for a friend…' : '🏁 Start Race!'}</button>`
-          : `<div class="tr-waiting">Waiting for ${hostName} to start…</div>`}
+        ? `<button class="tr-btn tr-btn-grass" id="startBtn" ${roster.length < 2 ? 'disabled' : ''}>${roster.length < 2 ? 'Waiting for a friend…' : '🏁 Start Race!'}</button>`
+        : `<div class="tr-waiting">Waiting for ${hostName} to start…</div>`}
         <button class="tr-btn tr-btn-secondary" id="backToModeBtn">Leave Room</button>
       </div>
     `;
@@ -1433,17 +1433,17 @@
     const backToModeBtn = document.getElementById('backToModeBtn');
     if (backToModeBtn) backToModeBtn.onclick = async () => {
       if (state.roomRef && state.roomListener) {
-        try { state.roomRef.off('value', state.roomListener); } catch (_) {}
+        try { state.roomRef.off('value', state.roomListener); } catch (_) { }
         state.roomRef = null;
         state.roomListener = null;
         if (FB.db && state.roomCode && state.roomData && state.roomData.hostId === state.playerId) {
-          try { await FB.db.ref(roomPath(state.roomCode)).remove().catch(() => {}); } catch (_) {}
+          try { await FB.db.ref(roomPath(state.roomCode)).remove().catch(() => { }); } catch (_) { }
         } else if (FB.db && state.roomCode && state.roomData && state.roomData.players && state.roomData.players[state.playerId]) {
           try {
             const players = { ...state.roomData.players };
             delete players[state.playerId];
-            await FB.db.ref(roomPath(state.roomCode)).update({ players, updatedAt: Date.now() }).catch(() => {});
-          } catch (_) {}
+            await FB.db.ref(roomPath(state.roomCode)).update({ players, updatedAt: Date.now() }).catch(() => { });
+          } catch (_) { }
         }
       }
       state.mode = null;
@@ -1543,7 +1543,7 @@
       const players = { ...state.roomData.players };
       delete players[state.playerId];
       if (Object.keys(players).length === 0) {
-        FB.db.ref(roomPath(state.roomCode)).remove().catch(() => {});
+        FB.db.ref(roomPath(state.roomCode)).remove().catch(() => { });
       } else {
         FB.db.ref(roomPath(state.roomCode)).update({
           players,
@@ -1551,9 +1551,9 @@
           hostId: state.roomData.hostId === state.playerId
             ? (Object.keys(players)[0] || state.roomData.hostId)
             : state.roomData.hostId
-        }).catch(() => {});
+        }).catch(() => { });
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   window.addEventListener('beforeunload', () => {
