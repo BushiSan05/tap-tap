@@ -1,675 +1,526 @@
-(function () {
+﻿(function () {
   const AVATARS = ['🦊', '🐸', '🦁', '🐵', '🐼', '🐰', '🐨', '🐯'];
-  const MAX_PLAYERS = 8;
-  const TAP_AMOUNT = 6;
-  const TRACK_GOAL = 100;
-  const COUNTDOWN_MS = 3000;
+  const TRACK_GOAL = 1000;
   const LANE_COUNT = 3;
-  const ROAD_SCROLL_SPEED = 2.2;
-  const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const CONTROL_BONUSES = {
-    tap: TAP_AMOUNT,
-    left: 5,
-    up: 10,
-    right: 7
-  };
+  const PLAYER_LIVES = 3;
+  const COUNTDOWN_MS = 3000;
 
   const firebaseConfig = {
-    apiKey: "AIzaSyBUdcVQPzV7ThowDE3-N2u35tnGRcooSiE",
-    authDomain: "taptap-ec46c.firebaseapp.com",
-    databaseURL: "https://taptap-ec46c-default-rtdb.asia-southeast1.firebasedatabase.app/",
-    projectId: "taptap-ec46c",
-    storageBucket: "taptap-ec46c.firebasestorage.app",
-    messagingSenderId: "58480959375",
-    appId: "1:58480959375:web:7ec0f6f084d80f6c8275fa",
-    measurementId: "G-6R71MV4GXC"
+    apiKey: 'AIzaSyBUdcVQPzV7ThowDE3-N2u35tnGRcooSiE',
+    authDomain: 'taptap-ec46c.firebaseapp.com',
+    databaseURL: 'https://taptap-ec46c-default-rtdb.asia-southeast1.firebasedatabase.app/',
+    projectId: 'taptap-ec46c',
+    storageBucket: 'taptap-ec46c.firebasestorage.app',
+    messagingSenderId: '58480959375',
+    appId: '1:58480959375:web:7ec0f6f084d80f6c8275fa',
+    measurementId: 'G-6R71MV4GXC'
   };
 
-  function firebaseIsConfigured() {
-    return !Object.values(firebaseConfig).some((value) => typeof value === 'string' && value.includes('YOUR_'));
-  }
-
-  const firebaseReady = !!window.firebase && firebaseIsConfigured();
-
-  if (window.firebase && !firebase.apps.length && firebaseReady) {
-    firebase.initializeApp(firebaseConfig);
-  }
-  const db = firebaseReady && window.firebase ? firebase.database() : null;
-
-  let playerId = 'p_' + Math.random().toString(36).slice(2, 10);
-  let playerName = localStorage.getItem('tapRaceName') || '';
-  let avatar = AVATARS[Math.floor(Math.random() * AVATARS.length)];
-  let roomCode = '';
-  let roomRef = null;
-  let roomListener = null;
-  let screen = 'mode';
-  let gameMode = null;
-  let errorMsg = '';
-  let joinCodeDraft = '';
-  let roomData = null;
-  let lastTapTime = 0;
-  let tapCombo = 0;
-  let audioCtx = null;
-  let firebaseStatus = {
-    connected: false,
-    message: 'Checking Firebase connection…'
+  const state = {
+    playerId: 'p_' + Math.random().toString(36).slice(2, 10),
+    playerName: localStorage.getItem('tapRaceName') || '',
+    avatar: AVATARS[Math.floor(Math.random() * AVATARS.length)],
+    screen: 'mode',
+    mode: null,
+    roomCode: '',
+    roomData: null,
+    roomRef: null,
+    roomListener: null,
+    joinCodeDraft: '',
+    errorMsg: '',
+    db: null,
+    firebaseReady: false,
+    firebaseStatus: { connected: false, message: 'Checking Firebase…' },
+    leaderboard: []
   };
-  let leaderboard = [];
 
   const root = document.getElementById('trRoot');
 
-  function setupFirebaseStatus() {
-    if (!db || !db.ref) return;
-    db.ref('.info/connected').on('value', (snapshot) => {
-      firebaseStatus.connected = !!snapshot.val();
-      firebaseStatus.message = firebaseStatus.connected
-        ? 'Connected to Firebase ✅'
-        : 'Firebase not connected yet';
-      if (screen === 'join' || screen === 'lobby' || screen === 'race' || screen === 'final') {
-        render();
-      }
-    });
-  }
-
-  function playTapSound() {
-    try {
-      const AudioCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtor) return;
-      if (!audioCtx) audioCtx = new AudioCtor();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      const now = audioCtx.currentTime;
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(540 + tapCombo * 24, now);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.06, now + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start(now);
-      osc.stop(now + 0.13);
-    } catch (e) {
-      // ignore audio failures silently
-    }
-  }
-
-  function resetTapMomentum() {
-    lastTapTime = 0;
-    tapCombo = 0;
-  }
-
-  function isTouchDevice() {
-    return window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  }
-
-  function getBoostValue(action = 'tap') {
-    const base = CONTROL_BONUSES[action] || TAP_AMOUNT;
-    const now = Date.now();
-    const timeSinceLastTap = lastTapTime ? now - lastTapTime : Infinity;
-    const rhythmBonus = timeSinceLastTap < 260 ? 3 : 0;
-    tapCombo = timeSinceLastTap < 260 ? tapCombo + 1 : 1;
-    const streakBonus = tapCombo >= 3 ? 4 : 0;
-    return base + rhythmBonus + streakBonus;
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
   }
 
   function genCode() {
-    let c = '';
-    for (let i = 0; i < 4; i++) c += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
-    return c;
-  }
-
-  function roomPath(code) { return `rooms/${code}`; }
-  function roomPlayers(room) { return room && room.players ? Object.values(room.players) : []; }
-
-  async function saveHighScore(score, mode = gameMode || 'solo') {
-    if (!db || !playerName.trim()) return;
-
-    const cleanName = playerName.trim().slice(0, 12);
-    const safeScore = Number(score) || 0;
-    const entry = {
-      playerId,
-      name: cleanName,
-      score: safeScore,
-      mode,
-      updatedAt: Date.now()
-    };
-
-    await db.ref(`leaderboard/${mode}/${playerId}`).set(entry);
-  }
-
-  async function loadLeaderboard(mode = gameMode || 'solo') {
-    if (!db) {
-      leaderboard = [];
-      return leaderboard;
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 4; i += 1) {
+      code += chars[Math.floor(Math.random() * chars.length)];
     }
-
-    const snapshot = await db.ref(`leaderboard/${mode}`).once('value');
-    const data = snapshot.val() || {};
-    leaderboard = Object.values(data)
-      .filter(Boolean)
-      .sort((a, b) => (b.score || 0) - (a.score || 0))
-      .slice(0, 5);
-    return leaderboard;
+    return code;
   }
 
-  function isHost() {
-    return !!roomData && roomData.hostId === playerId;
+  function firebaseIsConfigured() {
+    return Object.values(firebaseConfig).every((value) => typeof value === 'string' && value && !value.includes('YOUR_'));
   }
 
-  function attachRoomListener(code) {
-    if (roomRef) { roomRef.off('value', roomListener); }
-    roomRef = db.ref(roomPath(code));
-    roomListener = roomRef.on('value', (snapshot) => {
-      const data = snapshot.val();
-      roomData = data || null;
-      if (!roomData) {
-        roomCode = '';
-        screen = 'join';
+  function setupFirebase() {
+    state.firebaseReady = Boolean(window.firebase) && firebaseIsConfigured();
+    if (!state.firebaseReady) return;
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    state.db = firebase.database();
+    setupFirebaseStatus();
+  }
+
+  function setupFirebaseStatus() {
+    if (!state.db || !state.db.ref) return;
+    state.db.ref('.info/connected').on('value', (snapshot) => {
+      state.firebaseStatus.connected = !!snapshot.val();
+      state.firebaseStatus.message = snapshot.val() ? 'Firebase connected ✅' : 'Firebase reconnecting…';
+      if (['join', 'lobby', 'race', 'final'].includes(state.screen)) {
         render();
-        return;
       }
-
-      if (roomData.phase === 'countdown' && roomData.startedAt && Date.now() >= roomData.startedAt) {
-        roomRef.update({ phase: 'racing' }).catch(() => { });
-      }
-
-      if (roomData.phase === 'racing') {
-        const winner = Object.values(roomData.players || {}).find((p) => (p.progress || 0) >= TRACK_GOAL);
-        if (winner && winner.id && roomData.winnerId !== winner.id) {
-          const updatedScores = { ...(roomData.scores || {}) };
-          updatedScores[winner.id] = (updatedScores[winner.id] || 0) + 1;
-          roomRef.update({
-            phase: 'finished',
-            winnerId: winner.id,
-            scores: updatedScores
-          }).catch(() => { });
-        }
-      }
-
-      if (screen === 'lobby' && roomData.phase === 'countdown') screen = 'race';
-      if (screen === 'lobby' && roomData.phase === 'racing') screen = 'race';
-      if (screen === 'lobby' && roomData.phase === 'finished') screen = 'final';
-      if (screen === 'race' && roomData.phase === 'finished') screen = 'final';
-      if (screen === 'final' && roomData.phase === 'lobby') screen = 'lobby';
-      render();
     });
   }
 
-  async function createRoom() {
-    if (!db) {
-      errorMsg = 'Multiplayer needs Firebase set up in this project first.';
-      render();
-      return;
-    }
+  function roomPath(code) {
+    return `rooms/${code}`;
+  }
 
-    errorMsg = '';
-    if (!playerName.trim()) { errorMsg = 'Type a name first!'; render(); return; }
-    playerName = playerName.trim();
-    localStorage.setItem('tapRaceName', playerName);
+  function roomPlayers(room) {
+    return room && room.players ? Object.values(room.players) : [];
+  }
 
-    roomCode = genCode();
-    const player = { id: playerId, name: playerName, avatar, progress: 0, finished: false, joinedAt: Date.now() };
-    const room = {
-      code: roomCode,
-      hostId: playerId,
-      phase: 'lobby',
-      startedAt: null,
-      winnerId: null,
-      createdAt: Date.now(),
-      scores: {},
-      players: { [playerId]: player },
-      maxProgress: TRACK_GOAL
+  function getLanePercent(laneIndex) {
+    const laneTargets = [18, 50, 82];
+    return laneTargets[clamp(laneIndex, 0, LANE_COUNT - 1)] + '%';
+  }
+
+  function faceHTML(name, avatarEmoji, size = 'sm') {
+    const sizeClass = size === 'md' ? 'tr-face-md' : 'tr-face-sm';
+    return `<span class="tr-face ${sizeClass} tr-face-emoji" aria-label="${name || 'Player'} avatar">${avatarEmoji || '🏁'}</span>`;
+  }
+
+  function playerBadge(name, avatarEmoji = '🏁') {
+    return `<div class="tr-player-badge">${faceHTML(name, avatarEmoji, 'sm')}</div>`;
+  }
+
+  function createSoloRaceState() {
+    const player = {
+      id: state.playerId,
+      name: state.playerName.trim() || 'Driver',
+      avatar: state.avatar,
+      distance: 0,
+      lane: 1,
+      finished: false
     };
 
-    await db.ref(roomPath(roomCode)).set(room);
-    roomData = room;
-    attachRoomListener(roomCode);
-    screen = 'lobby';
-    render();
-  }
-
-  async function joinRoom() {
-    if (!db) {
-      errorMsg = 'Multiplayer needs Firebase set up in this project first.';
-      render();
-      return;
-    }
-
-    errorMsg = '';
-    if (!playerName.trim()) { errorMsg = 'Type a name first!'; render(); return; }
-    playerName = playerName.trim();
-    localStorage.setItem('tapRaceName', playerName);
-
-    const code = joinCodeDraft.trim().toUpperCase();
-    if (code.length < 4) { errorMsg = 'Enter the 4-letter race code.'; render(); return; }
-
-    const snap = await db.ref(roomPath(code)).once('value');
-    if (!snap.exists()) { errorMsg = "Can't find that race. Check the code!"; render(); return; }
-
-    const room = snap.val();
-    if (!room || !room.players) { errorMsg = "This room is invalid."; render(); return; }
-    if (Object.keys(room.players).length >= MAX_PLAYERS) { errorMsg = 'This room is full.'; render(); return; }
-
-    const usedAvatars = new Set(Object.values(room.players).map((p) => p.avatar));
-    avatar = AVATARS.find((a) => !usedAvatars.has(a)) || avatar;
-
-    const player = { id: playerId, name: playerName, avatar, progress: 0, finished: false, joinedAt: Date.now() };
-    const players = { ...room.players };
-    if (!players[playerId]) {
-      players[playerId] = player;
-      await db.ref(roomPath(code)).update({ players });
-    }
-
-    roomCode = code;
-    roomData = { ...room, players };
-    attachRoomListener(code);
-    screen = roomData.phase === 'finished' ? 'final' : 'lobby';
-    render();
-  }
-
-  async function startRace() {
-    if (!db) {
-      errorMsg = 'Multiplayer needs Firebase set up in this project first.';
-      render();
-      return;
-    }
-
-    if (!roomData || !isHost()) return;
-    resetTapMomentum();
-
-    const players = {};
-    Object.values(roomData.players || {}).forEach((player) => {
-      players[player.id] = { ...player, progress: 0, finished: false };
-    });
-
-    const nextRoom = {
-      ...roomData,
+    return {
       phase: 'countdown',
       startedAt: Date.now() + COUNTDOWN_MS,
       winnerId: null,
-      players
+      playerLane: 1,
+      speed: 0,
+      distance: 0,
+      lives: PLAYER_LIVES,
+      obstacles: [],
+      rivalCars: [
+        { id: 'rival_1', lane: 0, y: 18, speed: 1.2 },
+        { id: 'rival_2', lane: 2, y: 42, speed: 1.5 },
+        { id: 'rival_3', lane: 1, y: 68, speed: 1.9 }
+      ],
+      lastInputAt: 0,
+      crashFlash: false,
+      players: { [state.playerId]: player }
     };
-
-    await db.ref(roomPath(roomCode)).set(nextRoom);
   }
 
-  function updatePlayerProgressFromAction(action = 'tap') {
-    if (!roomData || roomData.phase !== 'racing') return;
+  function startSoloRace() {
+    state.mode = 'solo';
+    state.roomData = createSoloRaceState();
+    state.screen = 'race';
+    state.errorMsg = '';
+    render();
+  }
 
-    if (gameMode === 'solo') {
+  function createPlayerEntry() {
+    return {
+      id: state.playerId,
+      name: state.playerName.trim() || 'Driver',
+      avatar: state.avatar,
+      distance: 0,
+      lane: 1,
+      finished: false
+    };
+  }
+
+  function spawnObstacle() {
+    if (!state.roomData || state.mode !== 'solo' || state.roomData.phase !== 'racing') return;
+    const lane = Math.floor(Math.random() * LANE_COUNT);
+    state.roomData.obstacles.push({
+      id: 'obs_' + Date.now() + '_' + Math.random().toString(16).slice(2, 6),
+      lane,
+      y: -16,
+      speed: 1.6 + Math.random() * 2.0
+    });
+  }
+
+  function completeRace(winnerType) {
+    if (!state.roomData) return;
+    state.roomData.phase = 'finished';
+    state.roomData.winnerId = winnerType === 'crash' ? 'crash' : state.playerId;
+    state.screen = 'final';
+    persistRaceResult();
+    render();
+  }
+
+  function updateSoloRaceLoop() {
+    if (!state.roomData || state.mode !== 'solo' || state.roomData.phase !== 'racing') return;
+
+    const race = state.roomData;
+    const now = Date.now();
+    const hasInputRecently = now - (race.lastInputAt || 0) < 500;
+
+    if (!hasInputRecently) {
+      race.speed = 0;
+      race.players[state.playerId] = {
+        ...race.players[state.playerId],
+        distance: race.distance,
+        lane: race.playerLane ?? 1,
+        finished: race.distance >= TRACK_GOAL
+      };
+      return;
+    }
+
+    race.speed = clamp((race.speed || 0) * 0.97 + 7, 0, 100);
+    race.distance = Math.min(TRACK_GOAL, (race.distance || 0) + race.speed * 0.28);
+
+    race.obstacles = (race.obstacles || [])
+      .map((obstacle) => ({ ...obstacle, y: obstacle.y + 1.3 + (race.speed * 0.04) + obstacle.speed }))
+      .filter((obstacle) => obstacle.y < 118);
+
+    if (race.obstacles.length < 4 && Math.random() < 0.2) {
+      spawnObstacle();
+    }
+
+    const playerLane = race.playerLane ?? 1;
+    for (let i = race.obstacles.length - 1; i >= 0; i -= 1) {
+      const obstacle = race.obstacles[i];
+      const hit = obstacle.lane === playerLane && obstacle.y >= 66 && obstacle.y <= 92;
+      if (hit) {
+        race.lives = Math.max(0, (race.lives || 0) - 1);
+        race.crashFlash = true;
+        race.obstacles.splice(i, 1);
+        setTimeout(() => {
+          if (state.roomData) state.roomData.crashFlash = false;
+        }, 180);
+      }
+    }
+
+    if (race.lives <= 0) {
+      completeRace('crash');
+      return;
+    }
+
+    race.rivalCars = (race.rivalCars || [])
+      .map((car) => ({ ...car, y: car.y + car.speed + 0.7 }))
+      .filter((car) => car.y < 118);
+
+    if (race.rivalCars.length < 3 || race.rivalCars[race.rivalCars.length - 1].y > 40) {
+      race.rivalCars.push({
+        id: 'rival_' + Date.now(),
+        lane: Math.floor(Math.random() * LANE_COUNT),
+        y: -16,
+        speed: 1.2 + Math.random() * 1.5
+      });
+    }
+
+    for (const rival of race.rivalCars) {
+      if (rival.lane === playerLane && rival.y >= 66 && rival.y <= 92) {
+        race.lives = Math.max(0, (race.lives || 0) - 1);
+        race.crashFlash = true;
+        setTimeout(() => {
+          if (state.roomData) state.roomData.crashFlash = false;
+        }, 180);
+        race.rivalCars = race.rivalCars.filter((item) => item.id !== rival.id);
+        break;
+      }
+    }
+
+    if (race.lives <= 0) {
+      completeRace('crash');
+      return;
+    }
+
+    race.players[state.playerId] = {
+      ...race.players[state.playerId],
+      distance: race.distance,
+      lane: playerLane,
+      finished: race.distance >= TRACK_GOAL
+    };
+
+    if (race.distance >= TRACK_GOAL) {
+      completeRace('finish');
+      return;
+    }
+  }
+
+  function handleControlAction(action) {
+    if (!state.roomData) return;
+
+    if (state.mode === 'solo' && state.screen === 'race') {
       if (action === 'left') {
-        roomData.playerLane = Math.max(0, (roomData.playerLane || 1) - 1);
-        roomData.lastInputAt = Date.now();
-        roomData.accelerating = (roomData.speed || 0) > 0;
+        state.roomData.playerLane = clamp((state.roomData.playerLane ?? 1) - 1, 0, 2);
+        state.roomData.lastInputAt = Date.now();
         render();
         return;
       }
 
       if (action === 'right') {
-        roomData.playerLane = Math.min(LANE_COUNT - 1, (roomData.playerLane || 1) + 1);
-        roomData.lastInputAt = Date.now();
-        roomData.accelerating = (roomData.speed || 0) > 0;
+        state.roomData.playerLane = clamp((state.roomData.playerLane ?? 1) + 1, 0, 2);
+        state.roomData.lastInputAt = Date.now();
         render();
         return;
       }
 
       if (action === 'up' || action === 'tap') {
-        const boostValue = getBoostValue(action);
-        const playerEntry = roomData.players && roomData.players[playerId];
-        if (!playerEntry) return;
-
-        roomData.speed = Math.min(220, (roomData.speed || 0) + 42);
-        roomData.lastInputAt = Date.now();
-        roomData.accelerating = true;
-
-        const nextProgress = Math.min(TRACK_GOAL, (playerEntry.progress || 0) + boostValue + 2);
-        lastTapTime = Date.now();
-        playTapSound();
-
-        const players = { ...roomData.players };
-        players[playerId] = { ...playerEntry, progress: nextProgress, finished: nextProgress >= TRACK_GOAL };
-        roomData = { ...roomData, players };
-
-        if (nextProgress >= TRACK_GOAL) {
-          const scores = { ...(roomData.scores || {}) };
-          scores[playerId] = (scores[playerId] || 0) + 1;
-          roomData.phase = 'finished';
-          roomData.winnerId = playerId;
-          roomData.scores = scores;
-          resetTapMomentum();
-          screen = 'final';
-          persistRaceResult();
-          render();
+        if (state.roomData.phase === 'countdown') {
+          state.roomData.phase = 'racing';
+        }
+        state.roomData.lastInputAt = Date.now();
+        state.roomData.speed = clamp((state.roomData.speed || 0) + 25, 0, 100);
+        state.roomData.distance = Math.min(TRACK_GOAL, (state.roomData.distance || 0) + 24);
+        state.roomData.players[state.playerId] = {
+          ...state.roomData.players[state.playerId],
+          distance: state.roomData.distance,
+          lane: state.roomData.playerLane ?? 1,
+          finished: state.roomData.distance >= TRACK_GOAL
+        };
+        if (state.roomData.distance >= TRACK_GOAL) {
+          completeRace('finish');
           return;
         }
+        render();
       }
-      render();
       return;
     }
 
-    const playerEntry = roomData.players && roomData.players[playerId];
-    if (!playerEntry) return;
-
-    const boostValue = getBoostValue(action);
-    const nextProgress = Math.min(TRACK_GOAL, (playerEntry.progress || 0) + boostValue);
-    lastTapTime = Date.now();
-    playTapSound();
-
-    const players = { ...roomData.players };
-    players[playerId] = { ...playerEntry, progress: nextProgress, finished: nextProgress >= TRACK_GOAL };
-
-    const updatedRoom = { ...roomData, players };
-
-    if (nextProgress >= TRACK_GOAL) {
-      const scores = { ...(roomData.scores || {}) };
-      scores[playerId] = (scores[playerId] || 0) + 1;
-      updatedRoom.phase = 'finished';
-      updatedRoom.winnerId = playerId;
-      updatedRoom.scores = scores;
-      resetTapMomentum();
-      roomData = updatedRoom;
-      screen = 'final';
-      persistRaceResult();
-      render();
-      return;
-    }
-
-    roomData = updatedRoom;
-    render();
-  }
-
-  async function handleTap() {
-    updatePlayerProgressFromAction('tap');
-
-    if (gameMode !== 'solo' && roomCode && db && roomData && roomData.phase === 'racing') {
-      await db.ref(roomPath(roomCode)).update(roomData);
-    }
-  }
-
-  async function persistRaceResult() {
-    if (!roomData || !playerName.trim()) return;
-
-    const currentMode = gameMode || 'solo';
-    const scoreValue = currentMode === 'solo'
-      ? Math.max(0, Math.round(roomData.players?.[playerId]?.progress || 0))
-      : Math.max(0, Object.values(roomData.players || {}).reduce((total, p) => total + (p.progress || 0), 0));
-
-    await saveHighScore(scoreValue, currentMode);
-    await loadLeaderboard(currentMode);
-  }
-
-  async function handleControlAction(action) {
-    if (!roomData || roomData.phase !== 'racing') return;
-
-    updatePlayerProgressFromAction(action);
-
-    if (gameMode !== 'solo' && roomCode && db && roomData && roomData.phase === 'racing') {
-      await db.ref(roomPath(roomCode)).update(roomData);
-    }
-  }
-
-  async function rematch() {
-    resetTapMomentum();
-
-    if (gameMode === 'solo') {
-      roomData = createSoloRoomState();
-      screen = 'race';
-      render();
-      return;
-    }
-
-    if (!roomData || !isHost()) return;
-
-    const players = {};
-    Object.values(roomData.players || {}).forEach((player) => {
-      players[player.id] = { ...player, progress: 0, finished: false };
-    });
-
-    await db.ref(roomPath(roomCode)).update({
-      phase: 'lobby',
-      startedAt: null,
-      winnerId: null,
-      players
-    });
-  }
-
-  async function leaveCurrentRoom() {
-    if (!db || !roomCode || !roomData || !roomData.players || !roomData.players[playerId]) return;
-
-    const players = { ...roomData.players };
-    delete players[playerId];
-
-    if (Object.keys(players).length === 0) {
-      await db.ref(roomPath(roomCode)).remove();
-      roomCode = '';
-      roomData = null;
-      screen = 'join';
-      render();
-      return;
-    }
-
-    const nextHostId = roomData.hostId === playerId ? Object.keys(players)[0] : roomData.hostId;
-    const nextRoom = {
-      ...roomData,
-      hostId: nextHostId,
-      players,
-      phase: 'lobby',
-      startedAt: null,
-      winnerId: null
-    };
-
-    await db.ref(roomPath(roomCode)).update(nextRoom);
-    roomCode = '';
-    roomData = null;
-    screen = 'join';
-    render();
-  }
-
-  function renderClouds() {
-    const el = document.getElementById('trClouds');
-    if (!el || el.childElementCount) return;
-    const specs = [
-      { w: 120, h: 40, t: '8%', l: '-10%' },
-      { w: 80, h: 30, t: '20%', l: '70%' },
-      { w: 100, h: 34, t: '55%', l: '-15%' },
-    ];
-    el.innerHTML = specs.map((s) => `<div class="tr-cloud" style="width:${s.w}px;height:${s.h}px;top:${s.t};left:${s.l};"></div>`).join('');
-  }
-
-  function createSoloRoomState() {
-    const aiPlayers = [
-      { id: 'ai_1', name: 'Blaze', avatar: '🐺', progress: 0, finished: false },
-      { id: 'ai_2', name: 'Nova', avatar: '🦊', progress: 0, finished: false },
-      { id: 'ai_3', name: 'Vex', avatar: '🐯', progress: 0, finished: false }
-    ];
-
-    const players = {
-      [playerId]: { id: playerId, name: playerName, avatar, progress: 0, finished: false },
-      ...Object.fromEntries(aiPlayers.map((p) => [p.id, p]))
-    };
-
-    const scores = Object.fromEntries(Object.keys(players).map((id) => [id, 0]));
-
-    return {
-      code: 'SOLO',
-      hostId: playerId,
-      phase: 'racing',
-      startedAt: Date.now(),
-      winnerId: null,
-      scores,
-      players,
-      playerLane: 1,
-      obstacles: [],
-      rivalCars: [
-        { id: 'rival_1', lane: 0, y: 18, speed: 2.2 },
-        { id: 'rival_2', lane: 2, y: 34, speed: 2.7 },
-        { id: 'rival_3', lane: 1, y: 50, speed: 2.5 }
-      ],
-      lives: 3,
-      crashFlash: false,
-      speed: 0,
-      maxProgress: TRACK_GOAL,
-      lastInputAt: Date.now()
-    };
-  }
-
-  function getLanePosition(laneIndex) {
-    const laneProportions = [18, 50, 82];
-    return laneProportions[Math.min(Math.max(laneIndex, 0), LANE_COUNT - 1)] + '%';
-  }
-
-  function spawnObstacle() {
-    if (!roomData || gameMode !== 'solo' || roomData.phase !== 'racing') return;
-    const lane = Math.floor(Math.random() * LANE_COUNT);
-    const obstacle = {
-      id: `obs_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
-      lane,
-      y: -12,
-      speed: 3 + Math.random() * 2.8
-    };
-    roomData.obstacles = [...(roomData.obstacles || []), obstacle];
-  }
-
-  function updateSoloRaceLoop() {
-    if (!roomData || gameMode !== 'solo' || roomData.phase !== 'racing') return;
-
-    const now = Date.now();
-    const lastInputAt = roomData.lastInputAt || now;
-    const isAccelerating = now - lastInputAt <= 260;
-
-    if (isAccelerating) {
-      roomData.speed = Math.max(0, Math.min(220, (roomData.speed || 0) + 9));
-      roomData.accelerating = true;
-    } else {
-      roomData.speed = 0;
-      roomData.accelerating = false;
-    }
-
-    if (!isAccelerating) {
-      roomData.obstacles = [];
-      roomData.rivalCars = [];
-      roomData.players[playerId] = {
-        ...(roomData.players[playerId] || {}),
-        progress: Math.min(TRACK_GOAL, (roomData.players[playerId]?.progress || 0))
-      };
-      return;
-    }
-
-    const worldSpeed = Math.max(1.7, (roomData.speed || 0) / 72);
-
-    if (!roomData.lastSpawnAt || now - roomData.lastSpawnAt > 1200) {
-      if ((roomData.obstacles || []).length < 5) {
-        spawnObstacle();
+    if (state.mode === 'multiplayer' && state.roomData && state.roomData.phase === 'racing' && state.roomData.players && state.roomData.players[state.playerId]) {
+      if (action === 'left') {
+        state.roomData.players[state.playerId].lane = clamp((state.roomData.players[state.playerId].lane ?? 1) - 1, 0, 2);
+        syncMultiplayerPlayer();
+        render();
       }
-      roomData.lastSpawnAt = now;
-    }
 
-    const activeObstacles = (roomData.obstacles || []).map((obstacle) => ({
-      ...obstacle,
-      y: obstacle.y + worldSpeed + obstacle.speed * 0.35
-    })).filter((obstacle) => obstacle.y < 110);
-
-    let lives = roomData.lives || 3;
-    const remainingObstacles = [];
-    activeObstacles.forEach((obstacle) => {
-      const collided = obstacle.lane === (roomData.playerLane ?? 1) && obstacle.y >= 70 && obstacle.y <= 92;
-      if (collided) {
-        lives -= 1;
-        roomData.crashFlash = true;
-        setTimeout(() => {
-          if (roomData && roomData.crashFlash) roomData.crashFlash = false;
-        }, 180);
-        return;
+      if (action === 'right') {
+        state.roomData.players[state.playerId].lane = clamp((state.roomData.players[state.playerId].lane ?? 1) + 1, 0, 2);
+        syncMultiplayerPlayer();
+        render();
       }
-      remainingObstacles.push(obstacle);
-    });
 
-    roomData.obstacles = remainingObstacles;
-    roomData.lives = Math.max(0, lives);
-
-    roomData.rivalCars = (roomData.rivalCars || []).map((car) => ({
-      ...car,
-      y: car.y + car.speed + ROAD_SCROLL_SPEED + worldSpeed * 0.7
-    })).filter((car) => car.y < 120);
-
-    if (!roomData.rivalCars.length || roomData.rivalCars[roomData.rivalCars.length - 1].y > 44) {
-      roomData.rivalCars.push({
-        id: `rival_${Date.now()}`,
-        lane: Math.floor(Math.random() * LANE_COUNT),
-        y: -16,
-        speed: 2.2 + Math.random() * 1.6
-      });
-    }
-
-    if (roomData.rivalCars.some((car) => car.lane === (roomData.playerLane ?? 1) && car.y >= 70 && car.y <= 94)) {
-      roomData.lives = Math.max(0, (roomData.lives || 1) - 1);
-      roomData.crashFlash = true;
-      setTimeout(() => {
-        if (roomData && roomData.crashFlash) roomData.crashFlash = false;
-      }, 180);
-      roomData.rivalCars = roomData.rivalCars.filter((car) => !(car.lane === (roomData.playerLane ?? 1) && car.y >= 70 && car.y <= 94));
-    }
-
-    if (roomData.lives <= 0) {
-      roomData.phase = 'finished';
-      roomData.winnerId = 'crash';
-      roomData.scores = {
-        ...roomData.scores,
-        [playerId]: Math.max(0, (roomData.scores && roomData.scores[playerId]) || 0)
-      };
-      screen = 'final';
-      persistRaceResult();
-      render();
-      return;
-    }
-
-    if (roomData.players && roomData.players[playerId]) {
-      const playerEntry = roomData.players[playerId];
-      const forwardProgress = Math.max(0.7, (roomData.speed || 0) / 160);
-      const updatedProgress = Math.min(TRACK_GOAL, (playerEntry.progress || 0) + forwardProgress);
-      roomData.players[playerId] = {
-        ...playerEntry,
-        progress: updatedProgress,
-        finished: updatedProgress >= TRACK_GOAL
-      };
-      if ((roomData.players[playerId].progress || 0) >= TRACK_GOAL) {
-        roomData.phase = 'finished';
-        roomData.winnerId = playerId;
-        roomData.scores[playerId] = (roomData.scores[playerId] || 0) + 1;
-        screen = 'final';
-        persistRaceResult();
+      if (action === 'up' || action === 'tap') {
+        state.roomData.players[state.playerId].distance = Math.min(TRACK_GOAL, (state.roomData.players[state.playerId].distance || 0) + 26);
+        syncMultiplayerPlayer();
         render();
       }
     }
   }
 
-  function beginSoloRace() {
-    if (!playerName.trim()) {
-      errorMsg = 'Type a name first!';
+  function syncMultiplayerPlayer() {
+    if (!state.db || !state.roomCode || !state.roomData || !state.roomData.players || !state.roomData.players[state.playerId]) return;
+    state.db.ref(roomPath(state.roomCode)).update({
+      players: state.roomData.players,
+      updatedAt: Date.now()
+    }).catch(() => { });
+  }
+
+  async function saveHighScore(score, mode = state.mode || 'solo') {
+    if (!state.db || !state.playerName.trim()) return;
+    const safeName = state.playerName.trim().slice(0, 12);
+    const ref = state.db.ref(`leaderboard/${mode}/${safeName}`);
+    const current = await ref.once('value');
+    const currentScore = Number(current.val()?.score || 0);
+    if (currentScore >= Number(score) || !Number(score)) {
+      return;
+    }
+    await ref.set({
+      playerId: state.playerId,
+      name: safeName,
+      score: Number(score) || 0,
+      mode,
+      updatedAt: Date.now()
+    });
+  }
+
+  async function loadLeaderboard(mode = state.mode || 'solo') {
+    if (!state.db) {
+      state.leaderboard = [];
+      return [];
+    }
+    const snapshot = await state.db.ref(`leaderboard/${mode}`).once('value');
+    const data = snapshot.val() || {};
+    state.leaderboard = Object.values(data)
+      .filter(Boolean)
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, 5);
+    return state.leaderboard;
+  }
+
+  async function persistRaceResult() {
+    if (!state.playerName.trim() || !state.roomData) return;
+    const mode = state.mode || 'solo';
+    const score = Math.round(state.mode === 'solo' ? (state.roomData.distance || 0) : (state.roomData.players?.[state.playerId]?.distance || 0));
+    await saveHighScore(score, mode);
+    await loadLeaderboard(mode);
+  }
+
+  function attachRoomListener(code) {
+    if (state.roomRef && state.roomListener) {
+      state.roomRef.off('value', state.roomListener);
+    }
+
+    state.roomRef = state.db.ref(roomPath(code));
+    state.roomListener = state.roomRef.on('value', (snapshot) => {
+      const data = snapshot.val();
+      state.roomData = data || null;
+      if (!state.roomData) {
+        state.roomCode = '';
+        state.screen = 'join';
+        render();
+        return;
+      }
+
+      if (state.roomData.phase === 'countdown' && state.roomData.startedAt && Date.now() >= state.roomData.startedAt) {
+        state.roomRef.update({ phase: 'racing' }).catch(() => { });
+      }
+
+      if (state.roomData.phase === 'finished' && state.screen !== 'final') {
+        state.screen = 'final';
+      }
+
+      if (state.screen === 'lobby' && state.roomData.phase === 'racing') {
+        state.screen = 'race';
+      }
+      if (state.screen === 'race' && state.roomData.phase === 'finished') {
+        state.screen = 'final';
+      }
+      render();
+    });
+  }
+
+  async function createRoom() {
+    if (!state.db) {
+      state.errorMsg = 'Firebase is required for multiplayer.';
+      render();
+      return;
+    }
+    if (!state.playerName.trim()) {
+      state.errorMsg = 'Type a name first.';
       render();
       return;
     }
 
-    playerName = playerName.trim();
-    localStorage.setItem('tapRaceName', playerName);
-    errorMsg = '';
-    gameMode = 'solo';
-    roomCode = 'SOLO';
-    roomData = createSoloRoomState();
-    screen = 'race';
+    state.playerName = state.playerName.trim();
+    localStorage.setItem('tapRaceName', state.playerName);
+    state.errorMsg = '';
+    state.roomCode = genCode();
+    const player = createPlayerEntry();
+    const room = {
+      code: state.roomCode,
+      hostId: state.playerId,
+      phase: 'lobby',
+      startedAt: null,
+      winnerId: null,
+      players: { [state.playerId]: { ...player, distance: 0, lane: 1, finished: false } },
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+
+    await state.db.ref(roomPath(state.roomCode)).set(room);
+    state.roomData = room;
+    state.mode = 'multiplayer';
+    state.screen = 'lobby';
+    attachRoomListener(state.roomCode);
     render();
   }
 
-  function screenModeSelect() {
-    const multiplayerLabel = firebaseReady ? '🌐 Multiplayer' : '🌐 Multiplayer unavailable';
+  async function joinRoom() {
+    if (!state.db) {
+      state.errorMsg = 'Firebase is required for multiplayer.';
+      render();
+      return;
+    }
+    if (!state.playerName.trim()) {
+      state.errorMsg = 'Type a name first.';
+      render();
+      return;
+    }
 
+    const code = state.joinCodeDraft.trim().toUpperCase();
+    if (code.length < 4) {
+      state.errorMsg = 'Enter the 4-letter room code.';
+      render();
+      return;
+    }
+
+    const snapshot = await state.db.ref(roomPath(code)).once('value');
+    if (!snapshot.exists()) {
+      state.errorMsg = 'Room not found.';
+      render();
+      return;
+    }
+
+    const room = snapshot.val();
+    const player = createPlayerEntry();
+    const players = { ...(room.players || {}), [state.playerId]: { ...player, distance: 0, lane: 1, finished: false } };
+    await state.db.ref(roomPath(code)).update({ players, updatedAt: Date.now() });
+
+    state.playerName = state.playerName.trim();
+    localStorage.setItem('tapRaceName', state.playerName);
+    state.roomCode = code;
+    state.mode = 'multiplayer';
+    state.screen = 'lobby';
+    state.roomData = { ...room, players };
+    attachRoomListener(code);
+    render();
+  }
+
+  async function startRace() {
+    if (!state.db || !state.roomData || !state.roomData.hostId || state.roomData.hostId !== state.playerId) return;
+    const players = {};
+    Object.values(state.roomData.players || {}).forEach((player) => {
+      players[player.id] = { ...player, distance: 0, lane: 1, finished: false };
+    });
+
+    await state.db.ref(roomPath(state.roomCode)).set({
+      ...state.roomData,
+      phase: 'countdown',
+      startedAt: Date.now() + COUNTDOWN_MS,
+      winnerId: null,
+      players,
+      updatedAt: Date.now()
+    });
+  }
+
+  async function rematch() {
+    if (state.mode === 'solo') {
+      startSoloRace();
+      return;
+    }
+
+    if (!state.db || !state.roomData || !state.roomData.hostId || state.roomData.hostId !== state.playerId) return;
+    const players = {};
+    Object.values(state.roomData.players || {}).forEach((player) => {
+      players[player.id] = { ...player, distance: 0, lane: 1, finished: false };
+    });
+    await state.db.ref(roomPath(state.roomCode)).update({
+      phase: 'lobby',
+      startedAt: null,
+      winnerId: null,
+      players,
+      updatedAt: Date.now()
+    });
+  }
+
+  function screenModeSelect() {
     return `
       <div class="tr-card">
         <div class="tr-logo">TAP <span>RACE</span> ⚡</div>
-        <div class="tr-sub">Pick your mode before you race.</div>
-        <div class="tr-status ${firebaseReady ? 'ok' : 'warn'}">${firebaseReady ? 'Firebase ready for multiplayer' : 'Solo mode is available without Firebase'}</div>
+        <div class="tr-sub">Choose your way to race.</div>
+        <div class="tr-status ${state.firebaseReady ? 'ok' : 'warn'}">${state.firebaseReady ? 'Firebase ready for multiplayer.' : 'Solo mode available without Firebase.'}</div>
         <button class="tr-btn tr-btn-primary" id="soloModeBtn">🏁 Solo Race</button>
-        <button class="tr-btn tr-btn-secondary" id="multiModeBtn" ${firebaseReady ? '' : 'disabled'}>${multiplayerLabel}</button>
+        <button class="tr-btn tr-btn-secondary" id="multiModeBtn" ${state.firebaseReady ? '' : 'disabled'}>🌐 Multiplayer</button>
       </div>
     `;
   }
@@ -678,84 +529,83 @@
     return `
       <div class="tr-card">
         <div class="tr-logo">TAP <span>RACE</span> ⚡</div>
-        <div class="tr-sub">Solo mode: race the AI.</div>
-        <div class="tr-error">${errorMsg}</div>
-        <input class="tr-field" id="nameInput" maxlength="12" placeholder="Your name" value="${playerName}" style="text-transform:none" />
+        <div class="tr-sub">Enter your driver name.</div>
+        <div class="tr-error">${state.errorMsg}</div>
+        <input class="tr-field" id="nameInput" maxlength="12" placeholder="Your name" value="${state.playerName}" />
         <button class="tr-btn tr-btn-primary" id="soloStartBtn">Start Solo Race</button>
         <button class="tr-btn tr-btn-secondary" id="backToModeBtn">Back</button>
       </div>
     `;
   }
 
-  function faceHTML(name, avatarEmoji, size) {
-    const sizeClass = size === 'md' ? 'tr-face-md' : 'tr-face-sm';
-    return `<span class="tr-face ${sizeClass} tr-face-emoji" aria-label="${name || 'Player'} avatar">${avatarEmoji || '🏁'}</span>`;
-  }
-
-  function playerBadge(name, avatarEmoji, extraClass = '') {
-    return `<div class="tr-player-badge ${extraClass}">${faceHTML(name, avatarEmoji, 'sm')}</div>`;
-  }
-
   function screenJoin() {
     return `
       <div class="tr-card">
         <div class="tr-logo">TAP <span>RACE</span> ⚡</div>
-        <div class="tr-sub">Tap to win the track!</div>
-        <div class="tr-status ${firebaseStatus.connected ? 'ok' : 'warn'}">${firebaseStatus.message}</div>
-        <div class="tr-error">${errorMsg}</div>
-        <input class="tr-field" id="nameInput" maxlength="12" placeholder="Your name" value="${playerName}" style="text-transform:none" />
-        <button class="tr-btn tr-btn-primary" id="createBtn">🏁 Start a New Race</button>
+        <div class="tr-sub">Create or join a room.</div>
+        <div class="tr-status ${state.firebaseStatus.connected ? 'ok' : 'warn'}">${state.firebaseStatus.message}</div>
+        <div class="tr-error">${state.errorMsg}</div>
+        <input class="tr-field" id="nameInput" maxlength="12" placeholder="Your name" value="${state.playerName}" />
+        <button class="tr-btn tr-btn-primary" id="createBtn">🏁 Create Room</button>
         <div class="tr-divider">— or —</div>
-        <input class="tr-field" id="codeInput" maxlength="4" placeholder="Race code" value="${joinCodeDraft}" />
-        <button class="tr-btn tr-btn-secondary" id="joinBtn">Join a Race</button>
-        <button class="tr-btn tr-btn-secondary" id="backToModeBtn" style="background:#7B8BA6; box-shadow:0 6px 0 #5D6D8A;">Back</button>
+        <input class="tr-field" id="codeInput" maxlength="4" placeholder="Room code" value="${state.joinCodeDraft}" />
+        <button class="tr-btn tr-btn-secondary" id="joinBtn">Join Room</button>
+        <button class="tr-btn tr-btn-secondary" id="backToModeBtn">Back</button>
       </div>
     `;
   }
 
   function screenLobby() {
-    const roster = roomPlayers(roomData);
-    const hostName = roomData && roomData.hostId ? (roomData.players && roomData.players[roomData.hostId] ? roomData.players[roomData.hostId].name : 'the host') : 'the host';
+    const roster = roomPlayers(state.roomData);
+    const hostName = state.roomData?.hostId && state.roomData.players && state.roomData.players[state.roomData.hostId]
+      ? state.roomData.players[state.roomData.hostId].name
+      : 'Host';
+
     return `
       <div class="tr-card">
         <div class="tr-logo">TAP <span>RACE</span></div>
-        <div class="tr-sub">Get everyone in!</div>
-        <div class="tr-code-badge">${roomCode}</div>
+        <div class="tr-sub">Room code: ${state.roomCode}</div>
+        <div class="tr-code-badge">${state.roomCode}</div>
         <div class="tr-roster">
-          ${roster.map((p) => `<div class="tr-chip ${p.id === roomData?.hostId ? 'host' : ''}">${faceHTML(p.name, p.avatar, 'md')}${p.name}${p.id === roomData?.hostId ? ' 👑' : ''}</div>`).join('')}
+          ${roster.map((player) => `
+            <div class="tr-chip ${player.id === state.roomData?.hostId ? 'host' : ''}">
+              ${faceHTML(player.name, player.avatar, 'md')}${player.name}${player.id === state.roomData?.hostId ? ' 👑' : ''}
+            </div>
+          `).join('')}
         </div>
-        ${isHost() ? `<button class="tr-btn tr-btn-grass" id="startBtn" ${roster.length < 2 ? 'disabled' : ''}>${roster.length < 2 ? 'Waiting for a friend…' : '🏁 Start Race!'}</button>`
+        ${state.roomData && state.roomData.hostId === state.playerId
+        ? `<button class="tr-btn tr-btn-grass" id="startBtn" ${roster.length < 2 ? 'disabled' : ''}>${roster.length < 2 ? 'Waiting for a friend…' : '🏁 Start Race!'}</button>`
         : `<div class="tr-waiting">Waiting for ${hostName} to start…</div>`}
       </div>
     `;
   }
 
   function screenRace() {
-    if (!roomData) return '<div class="tr-card">Loading…</div>';
+    if (!state.roomData) return '<div class="tr-card">Loading…</div>';
 
-    const countdownText = roomData.phase === 'countdown' && roomData.startedAt ? `Starts in ${Math.max(1, Math.ceil((roomData.startedAt - Date.now()) / 1000))}` : '';
-    const myPlayer = roomData.players && roomData.players[playerId];
-    const myProgress = Math.min(100, Math.max(0, Math.round((myPlayer?.progress || 0))));
+    const distance = state.mode === 'solo'
+      ? Math.round(state.roomData.distance || 0)
+      : Math.round((state.roomData.players?.[state.playerId]?.distance || 0));
+
+    const speed = Math.round(state.mode === 'solo' ? (state.roomData.speed || 0) : 0);
+    const countdownText = state.roomData.phase === 'countdown' && state.roomData.startedAt ? `Starts in ${Math.max(1, Math.ceil((state.roomData.startedAt - Date.now()) / 1000))}` : '';
     const roadTrees = Array.from({ length: 18 }, (_, i) => `<span class="tr-tree" style="top:${(i * 12) % 100}%; left:${(i % 2 === 0 ? 8 : 82)}%; animation-delay:${(i * 0.12).toFixed(2)}s"></span>`).join('');
 
-    const speedValue = Math.min(220, Math.max(0, Math.round(roomData.speed || 0)));
     let raceCars = '';
-    let obstacleMarkup = '';
+    if (state.mode === 'solo') {
+      const playerLane = state.roomData.playerLane ?? 1;
+      const obstacleMarkup = (state.roomData.obstacles || []).map((obstacle) => `
+        <div class="tr-obstacle" style="left:${getLanePercent(obstacle.lane)}; top:${obstacle.y}%;"></div>
+      `).join('');
 
-    if (gameMode === 'solo') {
-      const safeLane = Math.min(Math.max(roomData.playerLane ?? 1, 0), 2);
-      const playerCarLeft = getLanePosition(safeLane);
-
-      obstacleMarkup = (roomData.obstacles || []).map((obstacle) => `
-        <div class="tr-obstacle" style="left:${getLanePosition(obstacle.lane)}; top:${obstacle.y}%;"></div>
+      const rivalMarkup = (state.roomData.rivalCars || []).map((car) => `
+        <div class="tr-rival-car" style="left:${getLanePercent(car.lane)}; top:${car.y}%"></div>
       `).join('');
 
       raceCars = `
-        <div class="tr-rival-car" style="left:${getLanePosition((roomData.rivalCars || [])[0]?.lane ?? 0)}; top:${(roomData.rivalCars || [])[0]?.y ?? 20}%"></div>
-        <div class="tr-rival-car alt" style="left:${getLanePosition((roomData.rivalCars || [])[1]?.lane ?? 1)}; top:${(roomData.rivalCars || [])[1]?.y ?? 40}%"></div>
-        <div class="tr-rival-car" style="left:${getLanePosition((roomData.rivalCars || [])[2]?.lane ?? 2)}; top:${(roomData.rivalCars || [])[2]?.y ?? 60}%"></div>
-        <div class="tr-car player" style="left:${playerCarLeft}; bottom:12%;">
-          <div class="tr-car-avatar">${faceHTML(playerName || 'You', avatar, 'sm')}</div>
+        ${rivalMarkup}
+        <div class="tr-car player" style="left:${getLanePercent(playerLane)}; bottom:12%;">
+          <div class="tr-car-avatar">${faceHTML(state.playerName || 'You', state.avatar, 'sm')}</div>
           <span class="tr-car-body"></span>
           <span class="tr-wheel wheel-1"></span>
           <span class="tr-wheel wheel-2"></span>
@@ -763,14 +613,12 @@
         ${obstacleMarkup}
       `;
     } else {
-      const players = roomPlayers(roomData);
-      raceCars = players.map((player, index) => {
-        const progress = Math.min(100, Math.max(0, player.progress || 0));
-        const laneSide = index % 2 === 0 ? 'left' : 'right';
-        const bottom = Math.min(18, Math.max(8, 18 - progress * 0.12));
-        const isMe = player.id === playerId;
+      raceCars = roomPlayers(state.roomData).map((player) => {
+        const left = getLanePercent(player.lane ?? 1);
+        const isMe = player.id === state.playerId;
+        const offset = isMe ? 0 : 0;
         return `
-          <div class="tr-car ${laneSide} ${isMe ? 'player' : 'enemy'}" style="bottom:${bottom}%; left:${laneSide === 'left' ? '27%' : '63%'}; transform: translateX(${Math.min(0, 56 - progress * 0.45)}px)">
+          <div class="tr-car ${isMe ? 'player' : 'enemy'}" style="left:${left}; bottom:${isMe ? 12 : 18}%; transform: translateX(${offset}px)">
             <div class="tr-car-avatar">${faceHTML(player.name, player.avatar, 'sm')}</div>
             <span class="tr-car-body"></span>
             <span class="tr-wheel wheel-1"></span>
@@ -780,7 +628,7 @@
       }).join('');
     }
 
-    const virtualController = isTouchDevice() ? `
+    const virtualController = window.matchMedia('(pointer: coarse)').matches ? `
       <div class="tr-virtual-controller" aria-label="Race controls">
         <button class="tr-control-btn" data-control="left" aria-label="Left">◀</button>
         <button class="tr-control-btn tr-control-up" data-control="up" aria-label="Up">▲</button>
@@ -788,15 +636,15 @@
       </div>
     ` : '';
 
-    const raceButton = roomData.phase === 'racing' ? `<button class="tr-tap-btn" id="trTapButton">${gameMode === 'solo' ? 'BOOST' : 'TAP'}</button>` : '';
+    const raceButton = state.roomData.phase === 'racing' ? `<button class="tr-tap-btn" id="trTapButton">${state.mode === 'solo' ? 'BOOST' : 'TAP'}</button>` : '';
 
     return `
       <div class="tr-race-scene">
-        <div class="tr-distance">DISTANCE: ${myProgress}M</div>
-        <div class="tr-speed-meter"><span>SPEED</span><strong>${speedValue}</strong></div>
+        <div class="tr-distance">DISTANCE: ${Math.min(100, Math.round(distance / 10))}M</div>
+        <div class="tr-speed-meter"><span>SPEED</span><strong>${speed}</strong></div>
         <div class="tr-road-wrap">
           ${roadTrees}
-          <div class="tr-road ${roomData.crashFlash ? 'tr-road-crash' : ''}">
+          <div class="tr-road ${state.roomData.crashFlash ? 'tr-road-crash' : ''}">
             <div class="tr-road-line line-1"></div>
             <div class="tr-road-line line-2"></div>
             <div class="tr-road-line line-3"></div>
@@ -804,72 +652,53 @@
             ${raceCars}
           </div>
         </div>
-        ${gameMode === 'solo' && roomData.lives !== undefined ? `<div class="tr-lives">LIVES: ${roomData.lives}</div>` : ''}
-        ${roomData.phase === 'countdown' ? `<div class="tr-race-overlay">${countdownText || 'RACE START!'}</div>` : ''}
-        ${roomData.crashFlash ? '<div class="tr-crash-flash"></div>' : ''}
+        ${state.mode === 'solo' ? `<div class="tr-lives">LIVES: ${state.roomData.lives}</div>` : ''}
+        ${state.roomData.phase === 'countdown' ? `<div class="tr-race-overlay">${countdownText || 'RACE START!'}</div>` : ''}
+        ${state.roomData.crashFlash ? '<div class="tr-crash-flash"></div>' : ''}
         ${raceButton}
-        ${roomData.phase === 'racing' ? virtualController : ''}
-        ${roomData.phase !== 'racing' && isHost() ? `<button class="tr-btn tr-btn-grass" id="startBtn" style="margin: 12px auto 0; max-width: 260px;">${countdownText ? 'Starting…' : 'Start Race'}</button>` : ''}
+        ${state.roomData.phase === 'racing' ? virtualController : ''}
       </div>
     `;
   }
 
   function screenFinal() {
-    const players = roomData ? roomData.players || {} : {};
-    const scoreMap = { ...(roomData?.scores || {}) };
-    Object.keys(players).forEach((id) => {
-      if (scoreMap[id] === undefined) scoreMap[id] = 0;
-    });
-
-    const entries = Object.entries(scoreMap).map(([id, wins]) => ({
+    const players = state.roomData ? state.roomData.players || {} : {};
+    const roomWins = Object.entries(state.roomData?.players || {}).map(([id, player]) => ({
       id,
-      wins,
-      name: players[id]?.name || 'Player',
-      avatar: players[id]?.avatar || '🏁'
+      wins: state.roomData?.winnerId === id ? 1 : 0,
+      name: player.name,
+      avatar: player.avatar
     }));
-    entries.sort((a, b) => b.wins - a.wins);
 
-    const leaderEntries = leaderboard.length
-      ? leaderboard.map((entry, index) => `
-        <div class="tr-score-row ${index === 0 ? 'winner' : ''}">
-          <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name || 'Player', entry.avatar || '🏁')}</span>
-          <span>${entry.score || 0} pts</span>
-        </div>
-      `).join('')
-      : '<div class="tr-waiting">No backend leaderboard yet.</div>';
+    const leaderboard = state.leaderboard.length
+      ? state.leaderboard.map((entry, index) => `
+          <div class="tr-score-row ${index === 0 ? 'winner' : ''}">
+            <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name || 'Player', entry.avatar || '🏁')}</span>
+            <span>${entry.score || 0} pts</span>
+          </div>
+        `).join('')
+      : '<div class="tr-waiting">No leaderboard yet.</div>';
 
-    const winner = roomData && roomData.winnerId ? players[roomData.winnerId] : null;
-    const confettiColors = ['#FF5252', '#FFC93C', '#3EC070', '#4FC3E8', '#fff'];
-    const confetti = Array.from({ length: 40 }).map((_, i) => {
-      const left = Math.random() * 100;
-      const delay = Math.random() * 0.6;
-      const size = 6 + Math.random() * 6;
-      const color = confettiColors[i % confettiColors.length];
-      return `<span style="left:${left}%; width:${size}px; height:${size * 0.4}px; background:${color}; animation-delay:${delay}s;"></span>`;
-    }).join('');
-
-    const rematchControl = gameMode === 'solo'
+    const winner = state.roomData && state.roomData.winnerId ? players[state.roomData.winnerId] : null;
+    const rematchControl = state.mode === 'solo' || (state.roomData && state.roomData.hostId === state.playerId)
       ? '<button class="tr-btn tr-btn-primary" id="rematchBtn" style="margin-top:14px;">🔁 Race Again</button>'
-      : (isHost() ? '<button class="tr-btn tr-btn-primary" id="rematchBtn" style="margin-top:14px;">🔁 Race Again</button>' : '<div class="tr-waiting" style="margin-top:14px;">Waiting for a rematch…</div>');
+      : '<div class="tr-waiting" style="margin-top:14px;">Waiting for the host…</div>';
 
     return `
-      <div class="tr-confetti">${confetti}</div>
       <div class="tr-card">
         <div class="tr-crown">🏆</div>
         <h2>${winner ? `${winner.name} wins!` : 'Race finished!'}</h2>
-        <div class="tr-sub">${winner ? `${winner.avatar} took the finish line` : 'The next race is ready.'}</div>
+        <div class="tr-sub">${winner ? `${winner.avatar} reached the finish line.` : 'The next race is ready.'}</div>
         <div class="tr-score-list">
-          ${entries.length ? entries.map((entry, index) => `
+          ${roomWins.length ? roomWins.map((entry, index) => `
             <div class="tr-score-row ${index === 0 ? 'winner' : ''}">
-              <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name, players[entry.id]?.avatar || '🏁')}</span>
-              <span>${entry.wins} pts</span>
+              <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name, entry.avatar)}</span>
+              <span>${entry.wins} win</span>
             </div>
-          `).join('') : '<div class="tr-waiting">No scores yet.</div>'}
+          `).join('') : '<div class="tr-waiting">No scores.</div>'}
         </div>
         <div class="tr-divider">High scores</div>
-        <div class="tr-score-list">
-          ${leaderEntries}
-        </div>
+        <div class="tr-score-list">${leaderboard}</div>
         ${rematchControl}
       </div>
     `;
@@ -877,63 +706,103 @@
 
   function render() {
     renderClouds();
-    let html = '';
-    if (screen === 'mode') html = screenModeSelect();
-    else if (screen === 'solo') html = screenSoloSetup();
-    else if (screen === 'join') html = screenJoin();
-    else if (screen === 'lobby') html = screenLobby();
-    else if (screen === 'race') html = screenRace();
-    else if (screen === 'final') html = screenFinal();
-    root.innerHTML = html;
+    let content = '';
+    if (state.screen === 'mode') content = screenModeSelect();
+    else if (state.screen === 'solo') content = screenSoloSetup();
+    else if (state.screen === 'join') content = screenJoin();
+    else if (state.screen === 'lobby') content = screenLobby();
+    else if (state.screen === 'race') content = screenRace();
+    else if (state.screen === 'final') content = screenFinal();
+    root.innerHTML = content;
     wireEvents();
+  }
+
+  function renderClouds() {
+    const clouds = document.getElementById('trClouds');
+    if (!clouds || clouds.childElementCount) return;
+    const specs = [
+      { w: 120, h: 40, t: '8%', l: '-10%' },
+      { w: 80, h: 30, t: '20%', l: '70%' },
+      { w: 100, h: 34, t: '55%', l: '-15%' }
+    ];
+    clouds.innerHTML = specs.map((spec) => `<div class="tr-cloud" style="width:${spec.w}px;height:${spec.h}px;top:${spec.t};left:${spec.l};"></div>`).join('');
   }
 
   function wireEvents() {
     const soloModeBtn = document.getElementById('soloModeBtn');
-    if (soloModeBtn) soloModeBtn.onclick = () => { screen = 'solo'; errorMsg = ''; render(); };
+    if (soloModeBtn) soloModeBtn.onclick = () => {
+      state.screen = 'solo';
+      state.errorMsg = '';
+      render();
+    };
 
     const multiModeBtn = document.getElementById('multiModeBtn');
     if (multiModeBtn) multiModeBtn.onclick = () => {
-      if (!firebaseReady || !db) {
-        errorMsg = 'Multiplayer needs Firebase set up in this project first.';
-        render();
-        return;
-      }
-      gameMode = 'multiplayer'; screen = 'join'; errorMsg = ''; render();
+      state.screen = 'join';
+      state.errorMsg = '';
+      render();
     };
 
     const backToModeBtn = document.getElementById('backToModeBtn');
-    if (backToModeBtn) backToModeBtn.onclick = () => { gameMode = null; screen = 'mode'; errorMsg = ''; render(); };
+    if (backToModeBtn) backToModeBtn.onclick = () => {
+      state.mode = null;
+      state.roomData = null;
+      state.roomCode = '';
+      state.screen = 'mode';
+      state.errorMsg = '';
+      render();
+    };
 
     const soloStartBtn = document.getElementById('soloStartBtn');
-    if (soloStartBtn) soloStartBtn.onclick = beginSoloRace;
+    if (soloStartBtn) soloStartBtn.onclick = () => {
+      if (!state.playerName.trim()) {
+        state.errorMsg = 'Type a name first.';
+        render();
+        return;
+      }
+      state.playerName = state.playerName.trim();
+      localStorage.setItem('tapRaceName', state.playerName);
+      startSoloRace();
+    };
 
     const nameInput = document.getElementById('nameInput');
     if (nameInput) {
-      nameInput.oninput = (e) => { playerName = e.target.value; localStorage.setItem('tapRaceName', playerName); };
+      nameInput.oninput = (event) => {
+        state.playerName = event.target.value;
+        localStorage.setItem('tapRaceName', state.playerName);
+      };
     }
-    const codeInput = document.getElementById('codeInput');
-    if (codeInput) {
-      codeInput.oninput = (e) => { joinCodeDraft = e.target.value.toUpperCase(); e.target.value = joinCodeDraft; };
-    }
+
     const createBtn = document.getElementById('createBtn');
     if (createBtn) createBtn.onclick = createRoom;
+
     const joinBtn = document.getElementById('joinBtn');
     if (joinBtn) joinBtn.onclick = joinRoom;
+
+    const codeInput = document.getElementById('codeInput');
+    if (codeInput) {
+      codeInput.oninput = (event) => {
+        state.joinCodeDraft = event.target.value.toUpperCase();
+        event.target.value = state.joinCodeDraft;
+      };
+    }
+
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.onclick = startRace;
+
     const tapBtn = document.getElementById('trTapButton');
-    if (tapBtn) tapBtn.onclick = handleTap;
-    const controllerButtons = document.querySelectorAll('[data-control]');
-    controllerButtons.forEach((button) => {
+    if (tapBtn) tapBtn.onclick = () => handleControlAction('up');
+
+    document.querySelectorAll('[data-control]').forEach((button) => {
       button.onclick = () => handleControlAction(button.dataset.control);
     });
+
     const rematchBtn = document.getElementById('rematchBtn');
     if (rematchBtn) rematchBtn.onclick = rematch;
   }
 
   window.addEventListener('keydown', (event) => {
-    const mapped = {
+    const map = {
       ArrowLeft: 'left',
       a: 'left',
       ArrowUp: 'up',
@@ -941,42 +810,41 @@
       ArrowRight: 'right',
       d: 'right'
     };
-
-    const action = mapped[event.key] || mapped[event.key.toLowerCase()];
+    const action = map[event.key] || map[event.key.toLowerCase()];
     if (!action) return;
-
-    if ((event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'ArrowRight') && event.preventDefault) {
-      event.preventDefault();
-    }
-
-    if (screen === 'race' && roomData && roomData.phase === 'racing') {
-      handleControlAction(action);
-    }
+    if (['ArrowLeft', 'ArrowUp', 'ArrowRight'].includes(event.key) && event.preventDefault) event.preventDefault();
+    if (state.screen === 'race') handleControlAction(action);
   });
 
   window.addEventListener('beforeunload', () => {
-    if (roomCode && roomData && roomData.players && roomData.players[playerId]) {
-      leaveCurrentRoom();
+    if (state.roomCode && state.roomData && state.roomData.players && state.roomData.players[state.playerId]) {
+      const players = { ...state.roomData.players };
+      delete players[state.playerId];
+      if (state.db && Object.keys(players).length === 0) {
+        state.db.ref(roomPath(state.roomCode)).remove().catch(() => { });
+      }
     }
   });
 
-  setupFirebaseStatus();
+  setupFirebase();
 
   setInterval(() => {
-    if (gameMode === 'solo' && roomData && roomData.phase === 'racing') {
-      updateSoloRaceLoop();
-      if (screen === 'race') render();
-      return;
+    if (state.mode === 'solo' && state.roomData && state.roomData.phase === 'countdown' && state.roomData.startedAt && Date.now() >= state.roomData.startedAt) {
+      state.roomData.phase = 'racing';
     }
 
-    if (gameMode !== 'solo' && screen === 'race' && roomData && roomData.phase === 'countdown' && roomData.startedAt && Date.now() >= roomData.startedAt) {
-      const update = { phase: 'racing' };
-      if (db) db.ref(roomPath(roomCode)).update(update).catch(() => { });
+    if (state.mode === 'solo' && state.roomData && state.roomData.phase === 'racing') {
+      updateSoloRaceLoop();
+      render();
     }
-  }, 200);
+
+    if (state.mode === 'multiplayer' && state.roomData && state.roomData.phase === 'countdown' && state.roomData.startedAt && Date.now() >= state.roomData.startedAt && state.db) {
+      state.db.ref(roomPath(state.roomCode)).update({ phase: 'racing', updatedAt: Date.now() }).catch(() => { });
+    }
+  }, 160);
 
   (async function () {
-    if (db && (gameMode || screen === 'mode')) {
+    if (state.db) {
       await loadLeaderboard('solo');
       await loadLeaderboard('multiplayer');
     }
