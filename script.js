@@ -369,6 +369,7 @@
   }, 8000);
 
   function roomPath(code) {
+    if (!code) return 'rooms/invalid';
     return `rooms/${code}`;
   }
 
@@ -462,7 +463,7 @@
     if (!race) return;
     if (!Array.isArray(race.obstacles)) race.obstacles = [];
     if (!Array.isArray(race.rivalCars)) race.rivalCars = [];
-    if (race.obstacles.length < 4 && Math.random() < 0.2) {
+    if (race.obstacles && race.obstacles.length < 4 && Math.random() < 0.2) {
       const lane = Math.floor(Math.random() * LANE_COUNT);
       race.obstacles.push({
         id: 'mobs_' + Date.now() + '_' + Math.random().toString(16).slice(2, 6),
@@ -471,7 +472,7 @@
         speed: 1.6 + Math.random() * 2.0
       });
     }
-    if (race.rivalCars.length < 3 || (race.rivalCars.length && race.rivalCars[race.rivalCars.length - 1].y > 40)) {
+    if (race.rivalCars.length < 3 || (race.rivalCars.length && race.rivalCars[race.rivalCars.length - 1]?.y > 40)) {
       race.rivalCars.push({
         id: 'mrival_' + Date.now(),
         lane: Math.floor(Math.random() * LANE_COUNT),
@@ -531,13 +532,15 @@
 
     if (!hasInputRecently) {
       race.speed = 0;
-      race.players[state.playerId] = {
-        ...race.players[state.playerId],
-        distance: race.distance,
-        lane: race.playerLane ?? 1,
-        finished: race.distance >= TRACK_GOAL,
-        finishedAt: race.distance >= TRACK_GOAL ? (race.players[state.playerId].finishedAt || now) : null
-      };
+      if (race.players && race.players[state.playerId]) {
+        race.players[state.playerId] = {
+          ...race.players[state.playerId],
+          distance: race.distance,
+          lane: race.playerLane ?? 1,
+          finished: race.distance >= TRACK_GOAL,
+          finishedAt: race.distance >= TRACK_GOAL ? (race.players[state.playerId].finishedAt || now) : null
+        };
+      }
       return;
     }
 
@@ -548,19 +551,21 @@
       .map((obstacle) => ({ ...obstacle, y: obstacle.y + 1.3 + (race.speed * 0.04) + obstacle.speed }))
       .filter((obstacle) => obstacle.y < 118);
 
-    if (race.obstacles.length < 4 && Math.random() < 0.2) {
+    if (race.obstacles && race.obstacles.length < 4 && Math.random() < 0.2) {
       spawnObstacle();
     }
 
     const playerLane = race.playerLane ?? 1;
-    for (let i = race.obstacles.length - 1; i >= 0; i -= 1) {
-      const obstacle = race.obstacles[i];
-      const hit = obstacle.lane === playerLane && obstacle.y >= 66 && obstacle.y <= 92;
-      if (hit) {
-        race.lives = Math.max(0, (race.lives || 0) - 1);
-        race.crashFlash = true;
-        race.obstacles.splice(i, 1);
-        setTimeout(() => { if (state.roomData) state.roomData.crashFlash = false; }, 180);
+    if (race.obstacles && Array.isArray(race.obstacles)) {
+      for (let i = race.obstacles.length - 1; i >= 0; i -= 1) {
+        const obstacle = race.obstacles[i];
+        const hit = obstacle.lane === playerLane && obstacle.y >= 66 && obstacle.y <= 92;
+        if (hit) {
+          race.lives = Math.max(0, (race.lives || 0) - 1);
+          race.crashFlash = true;
+          race.obstacles.splice(i, 1);
+          setTimeout(() => { if (state.roomData) state.roomData.crashFlash = false; }, 180);
+        }
       }
     }
 
@@ -573,7 +578,7 @@
       .map((car) => ({ ...car, y: car.y + car.speed + 0.7 }))
       .filter((car) => car.y < 118);
 
-    if (race.rivalCars.length < 3 || race.rivalCars[race.rivalCars.length - 1].y > 40) {
+    if (race.rivalCars.length < 3 || race.rivalCars[race.rivalCars.length - 1]?.y > 40) {
       race.rivalCars.push({
         id: 'rival_' + Date.now(),
         lane: Math.floor(Math.random() * LANE_COUNT),
@@ -597,13 +602,15 @@
       return;
     }
 
-    race.players[state.playerId] = {
-      ...race.players[state.playerId],
-      distance: race.distance,
-      lane: playerLane,
-      finished: race.distance >= TRACK_GOAL,
-      finishedAt: race.distance >= TRACK_GOAL ? (race.players[state.playerId].finishedAt || now) : null
-    };
+    if (race.players && race.players[state.playerId]) {
+      race.players[state.playerId] = {
+        ...race.players[state.playerId],
+        distance: race.distance,
+        lane: playerLane,
+        finished: race.distance >= TRACK_GOAL,
+        finishedAt: race.distance >= TRACK_GOAL ? (race.players[state.playerId].finishedAt || now) : null
+      };
+    }
 
     if (race.distance >= TRACK_GOAL) {
       completeRace('finish');
@@ -622,8 +629,8 @@
       .map((c) => ({ ...c, y: c.y + c.speed + 0.7 }))
       .filter((c) => c.y < 118);
     const me = race.players && race.players[state.playerId];
-    if (me) {
-      for (let i = (race.obstacles || []).length - 1; i >= 0; i -= 1) {
+    if (me && race.obstacles && Array.isArray(race.obstacles)) {
+      for (let i = race.obstacles.length - 1; i >= 0; i -= 1) {
         const obstacle = race.obstacles[i];
         const hit = obstacle.lane === (me.lane ?? 1) && obstacle.y >= 66 && obstacle.y <= 92;
         if (hit) {
@@ -658,7 +665,7 @@
         state.roomData.lastInputAt = Date.now();
         state.roomData.speed = clamp((state.roomData.speed || 0) + 32, 0, 120);
         state.roomData.distance = Math.min(TRACK_GOAL, (state.roomData.distance || 0) + 40);
-        const me = state.roomData.players[state.playerId];
+        const me = state.roomData.players && state.roomData.players[state.playerId];
         if (me) {
           me.distance = state.roomData.distance;
           me.lane = state.roomData.playerLane ?? 1;
@@ -735,7 +742,10 @@
     if (state.roomData.winnerId) updates.winnerId = state.roomData.winnerId;
     if (state.roomData.phase === 'finished') updates.phase = 'finished';
     try {
-      FB.db.ref(roomPath(state.roomCode)).update(updates).catch((err) => safeLog('multiSync', err));
+      const path = roomPath(state.roomCode);
+      if (path && path !== 'rooms/invalid') {
+        FB.db.ref(path).update(updates).catch((err) => safeLog('multiSync', err));
+      }
     } catch (err) {
       safeLog('multiSyncSync', err);
     }
@@ -770,18 +780,20 @@
     if (FB.db) {
       try {
         const ref = FB.db.ref(`leaderboard/${mode}/${id}`);
-        const current = await ref.once('value');
-        const currentScore = Number(current.val()?.score || 0);
-        if (currentScore < Number(score) && Number(score)) {
-          await ref.set({
-            playerId: state.playerId,
-            uid: id,
-            name: safeName,
-            avatar: state.avatar,
-            score: Number(score) || 0,
-            mode,
-            updatedAt: Date.now()
-          });
+        if (ref) {
+          const current = await ref.once('value');
+          const currentScore = Number(current.val()?.score || 0);
+          if (currentScore < Number(score) && Number(score)) {
+            await ref.set({
+              playerId: state.playerId,
+              uid: id,
+              name: safeName,
+              avatar: state.avatar,
+              score: Number(score) || 0,
+              mode,
+              updatedAt: Date.now()
+            });
+          }
         }
       } catch (err) {
         safeLog('saveHighScoreRtdb', err);
@@ -807,12 +819,15 @@
     }
     if (!result.length && FB.db) {
       try {
-        const snapshot = await FB.db.ref(`leaderboard/${mode}`).once('value');
-        const data = snapshot.val() || {};
-        return Object.values(data)
-          .filter(Boolean)
-          .sort((a, b) => (b.score || 0) - (a.score || 0))
-          .slice(0, 5);
+        const ref = FB.db.ref(`leaderboard/${mode}`);
+        if (ref) {
+          const snapshot = await ref.once('value');
+          const data = snapshot.val() || {};
+          return Object.values(data)
+            .filter(Boolean)
+            .sort((a, b) => (b.score || 0) - (a.score || 0))
+            .slice(0, 5);
+        }
       } catch (err) {
         safeLog('lbRtdb', err);
       }
@@ -880,8 +895,10 @@
     if (state.roomRef && state.roomListener) {
       try { state.roomRef.off('value', state.roomListener); } catch (_) { }
     }
-    if (!FB.db) return;
-    state.roomRef = FB.db.ref(roomPath(code));
+    if (!FB.db || !code) return;
+    const path = roomPath(code);
+    if (path === 'rooms/invalid') return;
+    state.roomRef = FB.db.ref(path);
     state.roomListener = state.roomRef.on('value', (snapshot) => {
       const data = snapshot.val();
       state.roomData = data || null;
@@ -963,7 +980,10 @@
       updatedAt: Date.now()
     };
     try {
-      await FB.db.ref(roomPath(state.roomCode)).set(room);
+      const path = roomPath(state.roomCode);
+      if (path && path !== 'rooms/invalid') {
+        await FB.db.ref(path).set(room);
+      }
       state.roomData = room;
       state.mode = 'multiplayer';
       state.screen = 'lobby';
@@ -996,7 +1016,13 @@
       return;
     }
     try {
-      const snapshot = await FB.db.ref(roomPath(code)).once('value');
+      const path = roomPath(code);
+      if (path === 'rooms/invalid') {
+        state.errorMsg = 'Invalid room code.';
+        render();
+        return;
+      }
+      const snapshot = await FB.db.ref(path).once('value');
       if (!snapshot.exists()) {
         state.errorMsg = 'Room not found.';
         render();
@@ -1013,7 +1039,7 @@
         ...(room.players || {}),
         [state.playerId]: { ...player, distance: 0, lane: 1, finished: false, finishedAt: null }
       };
-      await FB.db.ref(roomPath(code)).update({ players, updatedAt: Date.now() });
+      await FB.db.ref(path).update({ players, updatedAt: Date.now() });
       state.playerName = state.playerName.trim();
       localStorage.setItem('tapRaceName', state.playerName);
       await markCloudSaveDirty();
@@ -1038,17 +1064,20 @@
       players[player.id] = { ...player, distance: 0, lane: 1, finished: false, finishedAt: null };
     });
     try {
-      await FB.db.ref(roomPath(state.roomCode)).set({
-        ...state.roomData,
-        phase: 'countdown',
-        startedAt: Date.now() + COUNTDOWN_MS,
-        winnerId: null,
-        finishedRanked: [],
-        obstacles: [],
-        rivalCars: [],
-        players,
-        updatedAt: Date.now()
-      });
+      const path = roomPath(state.roomCode);
+      if (path && path !== 'rooms/invalid') {
+        await FB.db.ref(path).set({
+          ...state.roomData,
+          phase: 'countdown',
+          startedAt: Date.now() + COUNTDOWN_MS,
+          winnerId: null,
+          finishedRanked: [],
+          obstacles: [],
+          rivalCars: [],
+          players,
+          updatedAt: Date.now()
+        });
+      }
       state._raceFinishedPersisted = false;
     } catch (err) {
       safeLog('startRace', err);
@@ -1067,16 +1096,19 @@
       players[player.id] = { ...player, distance: 0, lane: 1, finished: false, finishedAt: null };
     });
     try {
-      await FB.db.ref(roomPath(state.roomCode)).update({
-        phase: 'lobby',
-        startedAt: null,
-        winnerId: null,
-        finishedRanked: [],
-        obstacles: [],
-        rivalCars: [],
-        players,
-        updatedAt: Date.now()
-      });
+      const path = roomPath(state.roomCode);
+      if (path && path !== 'rooms/invalid') {
+        await FB.db.ref(path).update({
+          phase: 'lobby',
+          startedAt: null,
+          winnerId: null,
+          finishedRanked: [],
+          obstacles: [],
+          rivalCars: [],
+          players,
+          updatedAt: Date.now()
+        });
+      }
       state._raceFinishedPersisted = false;
     } catch (err) {
       safeLog('rematch', err);
@@ -1183,7 +1215,7 @@
   function screenLobby() {
     const roster = roomPlayers(state.roomData);
     const hostName = state.roomData?.hostId && state.roomData.players && state.roomData.players[state.roomData.hostId]
-      ? state.roomData.players[state.roomData.hostId].name
+      ? state.roomData.players[state.roomData.hostId]?.name
       : 'Host';
     return `
       <div class="tr-card">
@@ -1193,7 +1225,7 @@
         <div class="tr-roster">
           ${roster.map((player) => `
             <div class="tr-chip ${player.id === state.roomData?.hostId ? 'host' : ''}">
-              ${faceHTML(player.name, player.avatar, 'md')}${player.name}${player.id === state.roomData?.hostId ? ' 👑' : ''}
+              ${faceHTML(player.name || 'Player', player.avatar || '🏁', 'md')}${player.name || 'Player'}${player.id === state.roomData?.hostId ? ' 👑' : ''}
             </div>
           `).join('')}
         </div>
@@ -1355,7 +1387,7 @@
         <div class="tr-score-list">
           ${rankedList.length ? rankedList.map((entry, index) => `
             <div class="tr-score-row ${index === 0 ? 'winner' : ''}">
-              <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name, entry.avatar)}</span>
+              <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name || 'Player', entry.avatar || '🏁')}</span>
               <span>${Math.min(TRACK_GOAL, entry.distance || 0)} pts</span>
             </div>
           `).join('') : '<div class="tr-waiting">No scores.</div>'}
@@ -1394,7 +1426,53 @@
     clouds.innerHTML = specs.map((spec) => `<div class="tr-cloud" style="width:${spec.w}px;height:${spec.h}px;top:${spec.t};left:${spec.l};"></div>`).join('');
   }
 
+  let _globalEventListenersAttached = false;
+  
   function wireEvents() {
+    // Attach global event listeners only once
+    if (!_globalEventListenersAttached) {
+      const stopHoldAction = () => {
+        state._activeHoldAction = null;
+      };
+
+      document.addEventListener('pointerup', stopHoldAction, { passive: true });
+      document.addEventListener('pointercancel', stopHoldAction, { passive: true });
+      document.addEventListener('pointerleave', stopHoldAction, { passive: true });
+
+      window.addEventListener('keydown', (event) => {
+        const map = {
+          ArrowLeft: 'left',
+          a: 'left',
+          A: 'left',
+          ArrowUp: 'up',
+          w: 'up',
+          W: 'up',
+          ArrowRight: 'right',
+          d: 'right',
+          D: 'right',
+          ' ': 'up'
+        };
+        const action = map[event.key];
+        if (!action) return;
+        if (['ArrowLeft', 'ArrowUp', 'ArrowRight', ' '].includes(event.key) && event.preventDefault) event.preventDefault();
+        if (state.screen === 'race') handleControlAction(action);
+      });
+
+      window.addEventListener('beforeunload', () => {
+        flushCloudSave();
+        sendRoomCleanup();
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+          flushCloudSave();
+          sendRoomCleanup();
+        }
+      });
+
+      _globalEventListenersAttached = true;
+    }
+
     const anonBtn = document.getElementById('anonBtn');
     if (anonBtn) anonBtn.onclick = signInAnonymously;
 
@@ -1449,13 +1527,19 @@
         state.roomRef = null;
         state.roomListener = null;
         if (FB.db && state.roomCode && state.roomData && state.roomData.hostId === state.playerId) {
-          try { await FB.db.ref(roomPath(state.roomCode)).remove().catch(() => { }); } catch (_) { }
+          const path = roomPath(state.roomCode);
+          if (path && path !== 'rooms/invalid') {
+            try { await FB.db.ref(path).remove().catch((err) => safeLog('roomRemove', err)); } catch (err) { safeLog('roomRemoveErr', err); }
+          }
         } else if (FB.db && state.roomCode && state.roomData && state.roomData.players && state.roomData.players[state.playerId]) {
           try {
             const players = { ...state.roomData.players };
             delete players[state.playerId];
-            await FB.db.ref(roomPath(state.roomCode)).update({ players, updatedAt: Date.now() }).catch(() => { });
-          } catch (_) { }
+            const path = roomPath(state.roomCode);
+            if (path && path !== 'rooms/invalid') {
+              await FB.db.ref(path).update({ players, updatedAt: Date.now() }).catch((err) => safeLog('roomLeave', err));
+            }
+          } catch (err) { safeLog('roomLeaveErr', err); }
         }
       }
       state.mode = null;
@@ -1548,32 +1632,9 @@
       bindControlButton(button, button.dataset.control);
     });
 
-    document.addEventListener('pointerup', stopHoldAction, { passive: true });
-    document.addEventListener('pointercancel', stopHoldAction, { passive: true });
-    document.addEventListener('pointerleave', stopHoldAction, { passive: true });
-
     const rematchBtn = document.getElementById('rematchBtn');
     if (rematchBtn) rematchBtn.onclick = rematch;
   }
-
-  window.addEventListener('keydown', (event) => {
-    const map = {
-      ArrowLeft: 'left',
-      a: 'left',
-      A: 'left',
-      ArrowUp: 'up',
-      w: 'up',
-      W: 'up',
-      ArrowRight: 'right',
-      d: 'right',
-      D: 'right',
-      ' ': 'up'
-    };
-    const action = map[event.key];
-    if (!action) return;
-    if (['ArrowLeft', 'ArrowUp', 'ArrowRight', ' '].includes(event.key) && event.preventDefault) event.preventDefault();
-    if (state.screen === 'race') handleControlAction(action);
-  });
 
   let cleanupSent = false;
   function sendRoomCleanup() {
@@ -1581,33 +1642,24 @@
     if (!(FB.db && state.roomCode && state.roomData && state.roomData.players && state.roomData.players[state.playerId])) return;
     cleanupSent = true;
     try {
+      const path = roomPath(state.roomCode);
+      if (!path || path === 'rooms/invalid') return;
+      
       const players = { ...state.roomData.players };
       delete players[state.playerId];
       if (Object.keys(players).length === 0) {
-        FB.db.ref(roomPath(state.roomCode)).remove().catch(() => { });
+        FB.db.ref(path).remove().catch((err) => safeLog('cleanupRemove', err));
       } else {
-        FB.db.ref(roomPath(state.roomCode)).update({
+        FB.db.ref(path).update({
           players,
           updatedAt: Date.now(),
           hostId: state.roomData.hostId === state.playerId
             ? (Object.keys(players)[0] || state.roomData.hostId)
             : state.roomData.hostId
-        }).catch(() => { });
+        }).catch((err) => safeLog('cleanupUpdate', err));
       }
-    } catch (_) { }
+    } catch (err) { safeLog('cleanupErr', err); }
   }
-
-  window.addEventListener('beforeunload', () => {
-    flushCloudSave();
-    sendRoomCleanup();
-  });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      flushCloudSave();
-      sendRoomCleanup();
-    }
-  });
 
   setupFirebase();
 
@@ -1633,8 +1685,11 @@
       updateMultiplayerLocalSim();
       render();
     }
-    if (state.mode === 'multiplayer' && state.roomData && state.roomData.phase === 'countdown' && state.roomData.startedAt && Date.now() >= state.roomData.startedAt && FB.db && state.roomData.hostId === state.playerId) {
-      FB.db.ref(roomPath(state.roomCode)).update({ phase: 'racing', updatedAt: Date.now() }).catch((err) => safeLog('cdGoTimer', err));
+    if (state.mode === 'multiplayer' && state.roomData && state.roomData.phase === 'countdown' && state.roomData.startedAt && Date.now() >= state.roomData.startedAt && FB.db && state.roomData.hostId === state.playerId && state.roomCode) {
+      const path = roomPath(state.roomCode);
+      if (path && path !== 'rooms/invalid') {
+        FB.db.ref(path).update({ phase: 'racing', updatedAt: Date.now() }).catch((err) => safeLog('cdGoTimer', err));
+      }
     }
   }, 160);
 
