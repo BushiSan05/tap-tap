@@ -385,17 +385,24 @@ body {
 }
 
 .tr-virtual-controller {
+  width: min(100%, 330px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: auto;
+  padding: 12px 6px 0;
+}
+
+.tr-steer-cluster {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  margin-top: 18px;
-  padding: 10px 12px 0;
+  gap: 12px;
 }
 
 .tr-control-btn {
-  width: clamp(54px, 14vw, 68px);
-  height: clamp(54px, 14vw, 68px);
+  width: clamp(58px, 15vw, 72px);
+  height: clamp(58px, 15vw, 72px);
   border: none;
   border-radius: 18px;
   background: linear-gradient(180deg, #6EC8FF 0%, #2E9FD1 100%);
@@ -418,6 +425,10 @@ body {
 .tr-control-up {
   background: linear-gradient(180deg, #ffd166 0%, #f7b801 100%);
   box-shadow: 0 8px 0 rgba(149, 102, 0, 0.85);
+}
+
+.tr-control-boost {
+  margin-left: auto;
 }
 
 .tr-control-up:active {

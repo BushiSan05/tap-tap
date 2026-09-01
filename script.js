@@ -3,7 +3,7 @@
 
   const AVATARS = ['🦊', '🐸', '🦁', '🐵', '🐼', '🐰', '🐨', '🐯'];
   const TEST_APP_GUEST_MODE = true;
-  const TRACK_GOAL = 3000;
+  const TRACK_GOAL = 10000;
   const LANE_COUNT = 3;
   const PLAYER_LIVES = 3;
   const COUNTDOWN_MS = 3000;
@@ -55,7 +55,8 @@
     _raceFinishedPersisted: false,
     _cloudSaveDirty: false,
     _toastTimer: null,
-    _offlineMode: false
+    _offlineMode: false,
+    _roomCleanupSent: false
   };
 
   const root = document.getElementById('trRoot');
@@ -63,6 +64,14 @@
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+  }
+
+  function distanceToScore(distance) {
+    return Math.round((Number(distance) || 0) / 100);
+  }
+
+  function distancePercent(distance) {
+    return Math.min(100, Math.round(((Number(distance) || 0) / TRACK_GOAL) * 100));
   }
 
   function genCode() {
@@ -428,10 +437,12 @@
   function startSoloRace() {
     normalizePlayerName();
     state.mode = 'solo';
+    state.roomCode = '';
     state.roomData = createSoloRaceState();
     state.screen = 'race';
     state.errorMsg = '';
     state._raceFinishedPersisted = false;
+    state._roomCleanupSent = false;
     render();
   }
 
@@ -529,24 +540,27 @@
 
     const race = state.roomData;
     const now = Date.now();
+    const isAccelerating = state._activeHoldAction === 'up';
     const hasInputRecently = now - (race.lastInputAt || 0) < 500;
 
-    if (!hasInputRecently) {
-      race.speed = 0;
-      if (race.players && race.players[state.playerId]) {
-        race.players[state.playerId] = {
-          ...race.players[state.playerId],
-          distance: race.distance,
-          lane: race.playerLane ?? 1,
-          finished: race.distance >= TRACK_GOAL,
-          finishedAt: race.distance >= TRACK_GOAL ? (race.players[state.playerId].finishedAt || now) : null
-        };
-      }
-      return;
+    if (isAccelerating) {
+      race.lastInputAt = now;
+      race.speed = clamp((race.speed || 0) + 3.4, 0, 150);
+    } else {
+      race.speed = clamp((race.speed || 0) * 0.88 - (hasInputRecently ? 0.5 : 2.5), 0, 150);
     }
 
-    race.speed = clamp((race.speed || 0) * 0.96 + (hasInputRecently ? 9 : 0), 0, 120);
-    race.distance = Math.min(TRACK_GOAL, (race.distance || 0) + race.speed * 0.34);
+    race.distance = Math.min(TRACK_GOAL, (race.distance || 0) + Math.max(0, race.speed) * 0.24);
+
+    if (race.players && race.players[state.playerId]) {
+      race.players[state.playerId] = {
+        ...race.players[state.playerId],
+        distance: race.distance,
+        lane: race.playerLane ?? 1,
+        finished: race.distance >= TRACK_GOAL,
+        finishedAt: race.distance >= TRACK_GOAL ? (race.players[state.playerId].finishedAt || now) : null
+      };
+    }
 
     race.obstacles = (race.obstacles || [])
       .map((obstacle) => ({ ...obstacle, y: obstacle.y + 1.3 + (race.speed * 0.04) + obstacle.speed }))
@@ -625,6 +639,9 @@
   function updateMultiplayerLocalSim() {
     if (!state.roomData || state.mode !== 'multiplayer' || state.roomData.phase !== 'racing') return;
     const race = state.roomData;
+    const isAccelerating = state._activeHoldAction === 'up';
+    const me = race.players && race.players[state.playerId];
+
     multiSpawnObstacles(race);
     race.obstacles = (race.obstacles || [])
       .map((o) => ({ ...o, y: o.y + 1.4 + o.speed }))
@@ -632,7 +649,21 @@
     race.rivalCars = (race.rivalCars || [])
       .map((c) => ({ ...c, y: c.y + c.speed + 0.7 }))
       .filter((c) => c.y < 118);
-    const me = race.players && race.players[state.playerId];
+
+    if (me) {
+      if (isAccelerating) {
+        me.distance = Math.min(TRACK_GOAL, (me.distance || 0) + 10);
+        me.finished = me.distance >= TRACK_GOAL;
+        if (me.finished) me.finishedAt = me.finishedAt || Date.now();
+      } else {
+        me.distance = Math.max(0, (me.distance || 0) - 1.6);
+      }
+      if (me.distance >= TRACK_GOAL) {
+        me.finished = true;
+        me.finishedAt = me.finishedAt || Date.now();
+      }
+    }
+
     if (me && race.obstacles && Array.isArray(race.obstacles)) {
       for (let i = race.obstacles.length - 1; i >= 0; i -= 1) {
         const obstacle = race.obstacles[i];
@@ -667,8 +698,10 @@
       if (action === 'up' || action === 'tap') {
         if (state.roomData.phase === 'countdown') state.roomData.phase = 'racing';
         state.roomData.lastInputAt = Date.now();
-        state.roomData.speed = clamp((state.roomData.speed || 0) + 32, 0, 120);
-        state.roomData.distance = Math.min(TRACK_GOAL, (state.roomData.distance || 0) + 40);
+        if (action === 'tap') {
+          state.roomData.speed = clamp((state.roomData.speed || 0) + 14, 0, 150);
+          state.roomData.distance = Math.min(TRACK_GOAL, (state.roomData.distance || 0) + 8);
+        }
         const me = state.roomData.players && state.roomData.players[state.playerId];
         if (me) {
           me.distance = state.roomData.distance;
@@ -704,7 +737,9 @@
           state.roomData.phase = 'racing';
           scheduleMultiplayerSync();
         }
-        me.distance = Math.min(TRACK_GOAL, (me.distance || 0) + 26);
+        if (action === 'tap') {
+          me.distance = Math.min(TRACK_GOAL, (me.distance || 0) + 8);
+        }
         if (me.distance >= TRACK_GOAL) {
           me.finished = true;
           me.finishedAt = me.finishedAt || Date.now();
@@ -850,10 +885,10 @@
     let score = 0;
     let won = false;
     if (mode === 'solo') {
-      score = crashed ? 0 : Math.round(state.roomData.distance || 0);
+      score = crashed ? 0 : distanceToScore(state.roomData.distance || 0);
       won = state.roomData.winnerId === state.playerId;
     } else {
-      score = Math.round(state.roomData.players?.[state.playerId]?.distance || 0);
+      score = distanceToScore(state.roomData.players?.[state.playerId]?.distance || 0);
       won = state.roomData.winnerId === state.playerId;
     }
     await saveHighScore(score, mode);
@@ -904,6 +939,7 @@
       try { state.roomRef.off('value', state.roomListener); } catch (_) { }
     }
     if (!FB.db || !code) return;
+    state._roomCleanupSent = false;
     const path = roomPath(code);
     if (path === 'rooms/invalid') return;
     state.roomRef = FB.db.ref(path);
@@ -973,6 +1009,7 @@
     await markCloudSaveDirty();
     state.errorMsg = '';
     state.roomCode = genCode();
+    state._roomCleanupSent = false;
     const player = createPlayerEntry();
     const room = {
       code: state.roomCode,
@@ -1055,6 +1092,7 @@
       state.mode = 'multiplayer';
       state.screen = 'lobby';
       state._raceFinishedPersisted = false;
+      state._roomCleanupSent = false;
       state.roomData = { ...room, players };
       attachRoomListener(code);
       showToast('Joined room!', 'success');
@@ -1305,13 +1343,15 @@
     const isTouch = window.matchMedia('(pointer: coarse)').matches;
     const virtualController = isTouch ? `
       <div class="tr-virtual-controller" aria-label="Race controls">
-        <button class="tr-control-btn" data-control="left" aria-label="Left">◀</button>
-        <button class="tr-control-btn tr-control-up" data-control="up" aria-label="Up">▲</button>
-        <button class="tr-control-btn" data-control="right" aria-label="Right">▶</button>
+        <div class="tr-steer-cluster">
+          <button class="tr-control-btn" data-control="left" aria-label="Left">◀</button>
+          <button class="tr-control-btn" data-control="right" aria-label="Right">▶</button>
+        </div>
+        <button class="tr-control-btn tr-control-up tr-control-boost" data-control="up" aria-label="Up">▲</button>
       </div>
     ` : '';
 
-    const raceButton = state.roomData.phase === 'racing'
+    const raceButton = state.roomData.phase === 'racing' && !isTouch
       ? `<button class="tr-tap-btn" id="trTapButton">${state.mode === 'solo' ? 'BOOST' : 'TAP'}</button>` : '';
 
     const ranked = state.roomData.finishedRanked || [];
@@ -1328,7 +1368,7 @@
           <div class="tr-standing-row ${p.id === state.playerId ? 'me' : ''}">
             <span class="rank">#${i + 1}</span>
             <span class="name">${faceHTML(p.name, p.avatar, 'sm')} ${p.name}</span>
-            <span class="pct">${Math.min(100, Math.round((p.distance || 0) / 10))}%</span>
+            <span class="pct">${distancePercent(p.distance || 0)}%</span>
           </div>
         `).join('')}</div>` : '';
 
@@ -1396,7 +1436,7 @@
           ${rankedList.length ? rankedList.map((entry, index) => `
             <div class="tr-score-row ${index === 0 ? 'winner' : ''}">
               <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name || 'Player', entry.avatar || '🏁')}</span>
-              <span>${Math.min(TRACK_GOAL, entry.distance || 0)} pts</span>
+              <span>${distanceToScore(Math.min(TRACK_GOAL, entry.distance || 0))} pts</span>
             </div>
           `).join('') : '<div class="tr-waiting">No scores.</div>'}
         </div>
@@ -1435,7 +1475,7 @@
   }
 
   let _globalEventListenersAttached = false;
-  
+
   function wireEvents() {
     // Attach global event listeners only once
     if (!_globalEventListenersAttached) {
@@ -1553,6 +1593,7 @@
       state.mode = null;
       state.roomData = null;
       state.roomCode = '';
+      state._roomCleanupSent = false;
       state.screen = 'mode';
       state.errorMsg = '';
       render();
@@ -1644,15 +1685,14 @@
     if (rematchBtn) rematchBtn.onclick = rematch;
   }
 
-  let cleanupSent = false;
   function sendRoomCleanup() {
-    if (cleanupSent) return;
+    if (state._roomCleanupSent) return;
     if (!(FB.db && state.roomCode && state.roomData && state.roomData.players && state.roomData.players[state.playerId])) return;
-    cleanupSent = true;
+    state._roomCleanupSent = true;
     try {
       const path = roomPath(state.roomCode);
       if (!path || path === 'rooms/invalid') return;
-      
+
       const players = { ...state.roomData.players };
       delete players[state.playerId];
       if (Object.keys(players).length === 0) {
