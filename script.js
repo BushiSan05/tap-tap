@@ -54,6 +54,7 @@
     connected: false,
     message: 'Checking Firebase connection…'
   };
+  let leaderboard = [];
 
   const root = document.getElementById('trRoot');
 
@@ -119,6 +120,37 @@
 
   function roomPath(code) { return `rooms/${code}`; }
   function roomPlayers(room) { return room && room.players ? Object.values(room.players) : []; }
+
+  async function saveHighScore(score, mode = gameMode || 'solo') {
+    if (!db || !playerName.trim()) return;
+
+    const cleanName = playerName.trim().slice(0, 12);
+    const safeScore = Number(score) || 0;
+    const entry = {
+      playerId,
+      name: cleanName,
+      score: safeScore,
+      mode,
+      updatedAt: Date.now()
+    };
+
+    await db.ref(`leaderboard/${mode}/${playerId}`).set(entry);
+  }
+
+  async function loadLeaderboard(mode = gameMode || 'solo') {
+    if (!db) {
+      leaderboard = [];
+      return leaderboard;
+    }
+
+    const snapshot = await db.ref(`leaderboard/${mode}`).once('value');
+    const data = snapshot.val() || {};
+    leaderboard = Object.values(data)
+      .filter(Boolean)
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, 5);
+    return leaderboard;
+  }
 
   function isHost() {
     return !!roomData && roomData.hostId === playerId;
@@ -267,14 +299,30 @@
     if (gameMode === 'solo') {
       if (action === 'left') {
         roomData.playerLane = Math.max(0, (roomData.playerLane || 1) - 1);
-      } else if (action === 'right') {
+        roomData.lastInputAt = Date.now();
+        roomData.accelerating = (roomData.speed || 0) > 0;
+        render();
+        return;
+      }
+
+      if (action === 'right') {
         roomData.playerLane = Math.min(LANE_COUNT - 1, (roomData.playerLane || 1) + 1);
-      } else if (action === 'up' || action === 'tap') {
+        roomData.lastInputAt = Date.now();
+        roomData.accelerating = (roomData.speed || 0) > 0;
+        render();
+        return;
+      }
+
+      if (action === 'up' || action === 'tap') {
         const boostValue = getBoostValue(action);
         const playerEntry = roomData.players && roomData.players[playerId];
         if (!playerEntry) return;
 
-        const nextProgress = Math.min(TRACK_GOAL, (playerEntry.progress || 0) + boostValue + 4);
+        roomData.speed = Math.min(220, (roomData.speed || 0) + 42);
+        roomData.lastInputAt = Date.now();
+        roomData.accelerating = true;
+
+        const nextProgress = Math.min(TRACK_GOAL, (playerEntry.progress || 0) + boostValue + 2);
         lastTapTime = Date.now();
         playTapSound();
 
@@ -290,6 +338,7 @@
           roomData.scores = scores;
           resetTapMomentum();
           screen = 'final';
+          persistRaceResult();
           render();
           return;
         }
@@ -320,6 +369,7 @@
       resetTapMomentum();
       roomData = updatedRoom;
       screen = 'final';
+      persistRaceResult();
       render();
       return;
     }
@@ -334,6 +384,18 @@
     if (gameMode !== 'solo' && roomCode && db && roomData && roomData.phase === 'racing') {
       await db.ref(roomPath(roomCode)).update(roomData);
     }
+  }
+
+  async function persistRaceResult() {
+    if (!roomData || !playerName.trim()) return;
+
+    const currentMode = gameMode || 'solo';
+    const scoreValue = currentMode === 'solo'
+      ? Math.max(0, Math.round(roomData.players?.[playerId]?.progress || 0))
+      : Math.max(0, Object.values(roomData.players || {}).reduce((total, p) => total + (p.progress || 0), 0));
+
+    await saveHighScore(scoreValue, currentMode);
+    await loadLeaderboard(currentMode);
   }
 
   async function handleControlAction(action) {
@@ -372,7 +434,7 @@
   }
 
   async function leaveCurrentRoom() {
-    if (!roomCode || !roomData || !roomData.players || !roomData.players[playerId]) return;
+    if (!db || !roomCode || !roomData || !roomData.players || !roomData.players[playerId]) return;
 
     const players = { ...roomData.players };
     delete players[playerId];
@@ -446,7 +508,8 @@
       lives: 3,
       crashFlash: false,
       speed: 0,
-      maxProgress: TRACK_GOAL
+      maxProgress: TRACK_GOAL,
+      lastInputAt: Date.now()
     };
   }
 
@@ -471,16 +534,39 @@
     if (!roomData || gameMode !== 'solo' || roomData.phase !== 'racing') return;
 
     const now = Date.now();
-    if (!roomData.lastSpawnAt || now - roomData.lastSpawnAt > 900) {
-      spawnObstacle();
+    const lastInputAt = roomData.lastInputAt || now;
+    const isAccelerating = now - lastInputAt <= 260;
+
+    if (isAccelerating) {
+      roomData.speed = Math.max(0, Math.min(220, (roomData.speed || 0) + 9));
+      roomData.accelerating = true;
+    } else {
+      roomData.speed = 0;
+      roomData.accelerating = false;
+    }
+
+    if (!isAccelerating) {
+      roomData.obstacles = [];
+      roomData.rivalCars = [];
+      roomData.players[playerId] = {
+        ...(roomData.players[playerId] || {}),
+        progress: Math.min(TRACK_GOAL, (roomData.players[playerId]?.progress || 0))
+      };
+      return;
+    }
+
+    const worldSpeed = Math.max(1.7, (roomData.speed || 0) / 72);
+
+    if (!roomData.lastSpawnAt || now - roomData.lastSpawnAt > 1200) {
+      if ((roomData.obstacles || []).length < 5) {
+        spawnObstacle();
+      }
       roomData.lastSpawnAt = now;
     }
 
-    roomData.speed = Math.min(220, (roomData.speed || 60) + 4);
-
     const activeObstacles = (roomData.obstacles || []).map((obstacle) => ({
       ...obstacle,
-      y: obstacle.y + obstacle.speed
+      y: obstacle.y + worldSpeed + obstacle.speed * 0.35
     })).filter((obstacle) => obstacle.y < 110);
 
     let lives = roomData.lives || 3;
@@ -503,7 +589,7 @@
 
     roomData.rivalCars = (roomData.rivalCars || []).map((car) => ({
       ...car,
-      y: car.y + car.speed + ROAD_SCROLL_SPEED
+      y: car.y + car.speed + ROAD_SCROLL_SPEED + worldSpeed * 0.7
     })).filter((car) => car.y < 120);
 
     if (!roomData.rivalCars.length || roomData.rivalCars[roomData.rivalCars.length - 1].y > 44) {
@@ -532,22 +618,27 @@
         [playerId]: Math.max(0, (roomData.scores && roomData.scores[playerId]) || 0)
       };
       screen = 'final';
+      persistRaceResult();
+      render();
       return;
     }
 
     if (roomData.players && roomData.players[playerId]) {
       const playerEntry = roomData.players[playerId];
-      const progressBoost = 0.8;
+      const forwardProgress = Math.max(0.7, (roomData.speed || 0) / 160);
+      const updatedProgress = Math.min(TRACK_GOAL, (playerEntry.progress || 0) + forwardProgress);
       roomData.players[playerId] = {
         ...playerEntry,
-        progress: Math.min(TRACK_GOAL, (playerEntry.progress || 0) + progressBoost),
-        finished: (playerEntry.progress || 0) + progressBoost >= TRACK_GOAL
+        progress: updatedProgress,
+        finished: updatedProgress >= TRACK_GOAL
       };
       if ((roomData.players[playerId].progress || 0) >= TRACK_GOAL) {
         roomData.phase = 'finished';
         roomData.winnerId = playerId;
         roomData.scores[playerId] = (roomData.scores[playerId] || 0) + 1;
         screen = 'final';
+        persistRaceResult();
+        render();
       }
     }
   }
@@ -598,17 +689,7 @@
 
   function faceHTML(name, avatarEmoji, size) {
     const sizeClass = size === 'md' ? 'tr-face-md' : 'tr-face-sm';
-    const slug = (name || '').trim().toLowerCase().replace(/\s+/g, '');
-    if (!slug) return `<span class="emoji">${avatarEmoji}</span>`;
-
-    const candidateSources = [
-      `assets/images/${slug}.png`,
-      `assets/images/${slug}.svg`,
-      'assets/images/default-player.svg'
-    ];
-
-    const fallbackMarkup = `<span class="emoji">${avatarEmoji}</span>`;
-    return `<img class="tr-face ${sizeClass}" src="${candidateSources[0]}" alt="${name}" onerror="this.onerror=null; const next = this.getAttribute('data-next'); if (next) { this.src = next; this.setAttribute('data-next', ''); } else { this.outerHTML='${fallbackMarkup.replace(/'/g, "\\'")}'; }" data-next="${candidateSources[1]}" />`;
+    return `<span class="tr-face ${sizeClass} tr-face-emoji" aria-label="${name || 'Player'} avatar">${avatarEmoji || '🏁'}</span>`;
   }
 
   function playerBadge(name, avatarEmoji, extraClass = '') {
@@ -657,7 +738,7 @@
     const myProgress = Math.min(100, Math.max(0, Math.round((myPlayer?.progress || 0))));
     const roadTrees = Array.from({ length: 18 }, (_, i) => `<span class="tr-tree" style="top:${(i * 12) % 100}%; left:${(i % 2 === 0 ? 8 : 82)}%; animation-delay:${(i * 0.12).toFixed(2)}s"></span>`).join('');
 
-    const speedValue = Math.min(220, Math.max(0, Math.round(roomData.speed || 75)));
+    const speedValue = Math.min(220, Math.max(0, Math.round(roomData.speed || 0)));
     let raceCars = '';
     let obstacleMarkup = '';
 
@@ -714,12 +795,12 @@
         <div class="tr-distance">DISTANCE: ${myProgress}M</div>
         <div class="tr-speed-meter"><span>SPEED</span><strong>${speedValue}</strong></div>
         <div class="tr-road-wrap">
+          ${roadTrees}
           <div class="tr-road ${roomData.crashFlash ? 'tr-road-crash' : ''}">
             <div class="tr-road-line line-1"></div>
             <div class="tr-road-line line-2"></div>
             <div class="tr-road-line line-3"></div>
             <div class="tr-road-line line-4"></div>
-            ${roadTrees}
             ${raceCars}
           </div>
         </div>
@@ -748,6 +829,15 @@
     }));
     entries.sort((a, b) => b.wins - a.wins);
 
+    const leaderEntries = leaderboard.length
+      ? leaderboard.map((entry, index) => `
+        <div class="tr-score-row ${index === 0 ? 'winner' : ''}">
+          <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name || 'Player', entry.avatar || '🏁')}</span>
+          <span>${entry.score || 0} pts</span>
+        </div>
+      `).join('')
+      : '<div class="tr-waiting">No backend leaderboard yet.</div>';
+
     const winner = roomData && roomData.winnerId ? players[roomData.winnerId] : null;
     const confettiColors = ['#FF5252', '#FFC93C', '#3EC070', '#4FC3E8', '#fff'];
     const confetti = Array.from({ length: 40 }).map((_, i) => {
@@ -775,6 +865,10 @@
               <span>${entry.wins} pts</span>
             </div>
           `).join('') : '<div class="tr-waiting">No scores yet.</div>'}
+        </div>
+        <div class="tr-divider">High scores</div>
+        <div class="tr-score-list">
+          ${leaderEntries}
         </div>
         ${rematchControl}
       </div>
@@ -881,5 +975,11 @@
     }
   }, 200);
 
-  render();
+  (async function () {
+    if (db && (gameMode || screen === 'mode')) {
+      await loadLeaderboard('solo');
+      await loadLeaderboard('multiplayer');
+    }
+    render();
+  })();
 })();
