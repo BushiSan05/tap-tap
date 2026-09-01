@@ -164,6 +164,12 @@
   }
 
   async function createRoom() {
+    if (!db) {
+      errorMsg = 'Multiplayer needs Firebase set up in this project first.';
+      render();
+      return;
+    }
+
     errorMsg = '';
     if (!playerName.trim()) { errorMsg = 'Type a name first!'; render(); return; }
     playerName = playerName.trim();
@@ -191,6 +197,12 @@
   }
 
   async function joinRoom() {
+    if (!db) {
+      errorMsg = 'Multiplayer needs Firebase set up in this project first.';
+      render();
+      return;
+    }
+
     errorMsg = '';
     if (!playerName.trim()) { errorMsg = 'Type a name first!'; render(); return; }
     playerName = playerName.trim();
@@ -224,6 +236,12 @@
   }
 
   async function startRace() {
+    if (!db) {
+      errorMsg = 'Multiplayer needs Firebase set up in this project first.';
+      render();
+      return;
+    }
+
     if (!roomData || !isHost()) return;
     resetTapMomentum();
 
@@ -552,13 +570,15 @@
   }
 
   function screenModeSelect() {
+    const multiplayerLabel = firebaseReady ? '🌐 Multiplayer' : '🌐 Multiplayer unavailable';
+
     return `
       <div class="tr-card">
         <div class="tr-logo">TAP <span>RACE</span> ⚡</div>
         <div class="tr-sub">Pick your mode before you race.</div>
         <div class="tr-status ${firebaseReady ? 'ok' : 'warn'}">${firebaseReady ? 'Firebase ready for multiplayer' : 'Solo mode is available without Firebase'}</div>
         <button class="tr-btn tr-btn-primary" id="soloModeBtn">🏁 Solo Race</button>
-        <button class="tr-btn tr-btn-secondary" id="multiModeBtn">🌐 Multiplayer</button>
+        <button class="tr-btn tr-btn-secondary" id="multiModeBtn" ${firebaseReady ? '' : 'disabled'}>${multiplayerLabel}</button>
       </div>
     `;
   }
@@ -779,7 +799,14 @@
     if (soloModeBtn) soloModeBtn.onclick = () => { screen = 'solo'; errorMsg = ''; render(); };
 
     const multiModeBtn = document.getElementById('multiModeBtn');
-    if (multiModeBtn) multiModeBtn.onclick = () => { gameMode = 'multiplayer'; screen = 'join'; errorMsg = ''; render(); };
+    if (multiModeBtn) multiModeBtn.onclick = () => {
+      if (!firebaseReady || !db) {
+        errorMsg = 'Multiplayer needs Firebase set up in this project first.';
+        render();
+        return;
+      }
+      gameMode = 'multiplayer'; screen = 'join'; errorMsg = ''; render();
+    };
 
     const backToModeBtn = document.getElementById('backToModeBtn');
     if (backToModeBtn) backToModeBtn.onclick = () => { gameMode = null; screen = 'mode'; errorMsg = ''; render(); };
@@ -839,19 +866,18 @@
     }
   });
 
+  setupFirebaseStatus();
+
   setInterval(() => {
     if (gameMode === 'solo' && roomData && roomData.phase === 'racing') {
       updateSoloRaceLoop();
       if (screen === 'race') render();
+      return;
     }
 
     if (gameMode !== 'solo' && screen === 'race' && roomData && roomData.phase === 'countdown' && roomData.startedAt && Date.now() >= roomData.startedAt) {
       const update = { phase: 'racing' };
       if (db) db.ref(roomPath(roomCode)).update(update).catch(() => { });
-    }
-
-    if (screen === 'race' || screen === 'final' || screen === 'lobby' || screen === 'mode' || screen === 'solo' || screen === 'join') {
-      if (screen !== 'final' || roomData) render();
     }
   }, 200);
 
