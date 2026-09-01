@@ -20,16 +20,25 @@ const { chromium } = require('playwright');
     await page.click('button:has-text("Start Solo Race")');
     await page.waitForTimeout(1500);
     
-    // Test race controls - tap to boost
+    // Test race controls - tap to boost during countdown
     const tapButton = page.locator('button[id="trTapButton"]');
     if (await tapButton.isVisible()) {
         await tapButton.click();
         await page.waitForTimeout(500);
-        await tapButton.click();
-        await page.waitForTimeout(500);
     }
     
-    // Test lane controls
+    // Wait for countdown to finish and race to start
+    await page.waitForTimeout(3000);
+    
+    // Test race controls - rapid tapping to maintain speed
+    if (await tapButton.isVisible()) {
+        for (let i = 0; i < 20; i++) {
+            await tapButton.click();
+            await page.waitForTimeout(100);
+        }
+    }
+    
+    // Test lane controls during race
     await page.keyboard.press('ArrowLeft');
     await page.waitForTimeout(200);
     await page.keyboard.press('ArrowRight');

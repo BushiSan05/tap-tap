@@ -486,6 +486,7 @@
     if (!state.roomData) return;
     const race = state.roomData;
     race.phase = 'finished';
+    if (!Array.isArray(race.finishedRanked)) race.finishedRanked = [];
     if (state.mode === 'solo') {
       race.winnerId = winnerType === 'crash' ? 'crash' : state.playerId;
       if (winnerType !== 'crash' && !race.finishedRanked.includes(state.playerId)) {
@@ -507,7 +508,7 @@
       if (!player || player.finished) continue;
       if ((player.distance || 0) >= TRACK_GOAL) {
         player.finished = true;
-        player.finishedAt = Date.now();
+        player.finishedAt = player.finishedAt || Date.now();
         if (!race.finishedRanked.includes(player.id)) {
           race.finishedRanked.push(player.id);
         }
@@ -544,7 +545,7 @@
       return;
     }
 
-    race.speed = clamp((race.speed || 0) * 0.96 + 9, 0, 120);
+    race.speed = clamp((race.speed || 0) * 0.96 + (hasInputRecently ? 9 : 0), 0, 120);
     race.distance = Math.min(TRACK_GOAL, (race.distance || 0) + race.speed * 0.34);
 
     race.obstacles = (race.obstacles || [])
@@ -587,13 +588,16 @@
       });
     }
 
-    for (const rival of race.rivalCars) {
-      if (rival.lane === playerLane && rival.y >= 66 && rival.y <= 92) {
-        race.lives = Math.max(0, (race.lives || 0) - 1);
-        race.crashFlash = true;
-        setTimeout(() => { if (state.roomData) state.roomData.crashFlash = false; }, 180);
-        race.rivalCars = race.rivalCars.filter((item) => item.id !== rival.id);
-        break;
+    if (race.rivalCars && Array.isArray(race.rivalCars)) {
+      for (let i = race.rivalCars.length - 1; i >= 0; i -= 1) {
+        const rival = race.rivalCars[i];
+        if (rival.lane === playerLane && rival.y >= 66 && rival.y <= 92) {
+          race.lives = Math.max(0, (race.lives || 0) - 1);
+          race.crashFlash = true;
+          race.rivalCars.splice(i, 1);
+          setTimeout(() => { if (state.roomData) state.roomData.crashFlash = false; }, 180);
+          break;
+        }
       }
     }
 
@@ -696,6 +700,10 @@
         return;
       }
       if (action === 'up' || action === 'tap') {
+        if (state.roomData.phase === 'countdown') {
+          state.roomData.phase = 'racing';
+          scheduleMultiplayerSync();
+        }
         me.distance = Math.min(TRACK_GOAL, (me.distance || 0) + 26);
         if (me.distance >= TRACK_GOAL) {
           me.finished = true;
