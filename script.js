@@ -3,7 +3,7 @@
 
   const AVATARS = ['🦊', '🐸', '🦁', '🐵', '🐼', '🐰', '🐨', '🐯'];
   const TEST_APP_GUEST_MODE = true;
-  const TRACK_GOAL = 1000;
+  const TRACK_GOAL = 3000;
   const LANE_COUNT = 3;
   const PLAYER_LIVES = 3;
   const COUNTDOWN_MS = 3000;
@@ -51,6 +51,7 @@
     leaderboard: { solo: [], multiplayer: [] },
     _pendingMultiSync: null,
     _lastMultiSyncAt: 0,
+    _activeHoldAction: null,
     _raceFinishedPersisted: false,
     _cloudSaveDirty: false,
     _toastTimer: null,
@@ -75,6 +76,13 @@
 
   function uid() {
     return (state.user && state.user.uid) || state.playerId;
+  }
+
+  function normalizePlayerName(value = state.playerName) {
+    const next = String(value || '').trim();
+    state.playerName = next || 'Driver';
+    localStorage.setItem('tapRaceName', state.playerName);
+    return state.playerName;
   }
 
   function isAuthenticated() {
@@ -417,6 +425,7 @@
   }
 
   function startSoloRace() {
+    normalizePlayerName();
     state.mode = 'solo';
     state.roomData = createSoloRaceState();
     state.screen = 'race';
@@ -532,8 +541,8 @@
       return;
     }
 
-    race.speed = clamp((race.speed || 0) * 0.97 + 7, 0, 100);
-    race.distance = Math.min(TRACK_GOAL, (race.distance || 0) + race.speed * 0.28);
+    race.speed = clamp((race.speed || 0) * 0.96 + 9, 0, 120);
+    race.distance = Math.min(TRACK_GOAL, (race.distance || 0) + race.speed * 0.34);
 
     race.obstacles = (race.obstacles || [])
       .map((obstacle) => ({ ...obstacle, y: obstacle.y + 1.3 + (race.speed * 0.04) + obstacle.speed }))
@@ -647,8 +656,8 @@
       if (action === 'up' || action === 'tap') {
         if (state.roomData.phase === 'countdown') state.roomData.phase = 'racing';
         state.roomData.lastInputAt = Date.now();
-        state.roomData.speed = clamp((state.roomData.speed || 0) + 25, 0, 100);
-        state.roomData.distance = Math.min(TRACK_GOAL, (state.roomData.distance || 0) + 24);
+        state.roomData.speed = clamp((state.roomData.speed || 0) + 32, 0, 120);
+        state.roomData.distance = Math.min(TRACK_GOAL, (state.roomData.distance || 0) + 40);
         const me = state.roomData.players[state.playerId];
         if (me) {
           me.distance = state.roomData.distance;
@@ -928,12 +937,13 @@
       render();
       return;
     }
-    if (!state.playerName.trim()) {
+    const name = normalizePlayerName();
+    if (!name || name === 'Driver' && !state.playerName.trim()) {
       state.errorMsg = 'Type a name first.';
       render();
       return;
     }
-    state.playerName = state.playerName.trim();
+    state.playerName = name;
     localStorage.setItem('tapRaceName', state.playerName);
     await markCloudSaveDirty();
     state.errorMsg = '';
@@ -973,7 +983,8 @@
       render();
       return;
     }
-    if (!state.playerName.trim()) {
+    const name = normalizePlayerName();
+    if (!name || name === 'Driver' && !state.playerName.trim()) {
       state.errorMsg = 'Type a name first.';
       render();
       return;
@@ -1199,6 +1210,7 @@
     const distance = state.mode === 'solo'
       ? Math.round(state.roomData.distance || 0)
       : Math.round((state.roomData.players?.[state.playerId]?.distance || 0));
+    const distanceDisplay = Math.min(TRACK_GOAL, distance);
     const speed = Math.round(state.mode === 'solo' ? (state.roomData.speed || 0) : 0);
     const countdownText = state.roomData.phase === 'countdown' && state.roomData.startedAt
       ? `Starts in ${Math.max(1, Math.ceil((state.roomData.startedAt - Date.now()) / 1000))}` : '';
@@ -1282,7 +1294,7 @@
 
     return `
       <div class="tr-race-scene">
-        <div class="tr-distance">DISTANCE: ${Math.min(100, Math.round(distance / 10))}M</div>
+        <div class="tr-distance">DISTANCE: ${distanceDisplay}M</div>
         <div class="tr-speed-meter"><span>SPEED</span><strong>${speed}</strong></div>
         <div class="tr-road-wrap">
           ${roadTrees}
@@ -1344,7 +1356,7 @@
           ${rankedList.length ? rankedList.map((entry, index) => `
             <div class="tr-score-row ${index === 0 ? 'winner' : ''}">
               <span>${index === 0 ? '🥇' : `#${index + 1}`} ${playerBadge(entry.name, entry.avatar)}</span>
-              <span>${Math.min(1000, entry.distance || 0)} pts</span>
+              <span>${Math.min(TRACK_GOAL, entry.distance || 0)} pts</span>
             </div>
           `).join('') : '<div class="tr-waiting">No scores.</div>'}
         </div>
@@ -1456,12 +1468,13 @@
 
     const soloStartBtn = document.getElementById('soloStartBtn');
     if (soloStartBtn) soloStartBtn.onclick = () => {
-      if (!state.playerName.trim()) {
+      const name = normalizePlayerName();
+      if (!name || !state.playerName.trim()) {
         state.errorMsg = 'Type a name first.';
         render();
         return;
       }
-      state.playerName = state.playerName.trim();
+      state.playerName = name;
       localStorage.setItem('tapRaceName', state.playerName);
       markCloudSaveDirty();
       startSoloRace();
@@ -1504,12 +1517,40 @@
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.onclick = startRace;
 
+    const stopHoldAction = () => {
+      state._activeHoldAction = null;
+    };
+
+    const beginHoldAction = (action) => {
+      if (!state.roomData || state.screen !== 'race') return;
+      state._activeHoldAction = action;
+      handleControlAction(action);
+    };
+
+    const bindControlButton = (button, action) => {
+      if (!button) return;
+      button.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        beginHoldAction(action);
+      });
+      button.addEventListener('pointerup', stopHoldAction);
+      button.addEventListener('pointerleave', stopHoldAction);
+      button.addEventListener('pointercancel', stopHoldAction);
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+      });
+    };
+
     const tapBtn = document.getElementById('trTapButton');
-    if (tapBtn) tapBtn.onclick = () => handleControlAction('up');
+    if (tapBtn) bindControlButton(tapBtn, 'up');
 
     document.querySelectorAll('[data-control]').forEach((button) => {
-      button.onclick = () => handleControlAction(button.dataset.control);
+      bindControlButton(button, button.dataset.control);
     });
+
+    document.addEventListener('pointerup', stopHoldAction, { passive: true });
+    document.addEventListener('pointercancel', stopHoldAction, { passive: true });
+    document.addEventListener('pointerleave', stopHoldAction, { passive: true });
 
     const rematchBtn = document.getElementById('rematchBtn');
     if (rematchBtn) rematchBtn.onclick = rematch;
@@ -1578,6 +1619,9 @@
   }
 
   setInterval(() => {
+    if (state._activeHoldAction && state.mode === 'solo' && state.screen === 'race' && state.roomData && state.roomData.phase === 'racing') {
+      handleControlAction(state._activeHoldAction);
+    }
     if (state.mode === 'solo' && state.roomData && state.roomData.phase === 'countdown' && state.roomData.startedAt && Date.now() >= state.roomData.startedAt) {
       state.roomData.phase = 'racing';
     }

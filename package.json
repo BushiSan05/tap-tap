@@ -1,0 +1,23 @@
+{
+  "name": "tap-race",
+  "version": "1.0.0",
+  "description": "",
+  "main": "script.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BushiSan05/tap-tap.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/BushiSan05/tap-tap/issues"
+  },
+  "homepage": "https://github.com/BushiSan05/tap-tap#readme",
+  "dependencies": {
+    "playwright": "^1.49.1"
+  }
+}
