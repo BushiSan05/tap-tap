@@ -696,6 +696,12 @@ body {
   z-index: 2;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.15);
   animation: tr-road-scroll 0.9s linear infinite;
+  animation-play-state: running;
+}
+
+.tr-road-wrap.tr-scene-idle .tr-road-line,
+.tr-race-scene.tr-scene-idle .tr-road-line {
+  animation-play-state: paused;
 }
 
 @keyframes tr-road-scroll {

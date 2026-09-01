@@ -548,6 +548,7 @@
       race.speed = clamp((race.speed || 0) + 3.4, 0, 150);
     } else {
       race.speed = clamp((race.speed || 0) * 0.88 - (hasInputRecently ? 0.5 : 2.5), 0, 150);
+      if (race.speed < 0.4) race.speed = 0;
     }
 
     race.distance = Math.min(TRACK_GOAL, (race.distance || 0) + Math.max(0, race.speed) * 0.24);
@@ -1293,6 +1294,8 @@
     const countdownText = state.roomData.phase === 'countdown' && state.roomData.startedAt
       ? `Starts in ${Math.max(1, Math.ceil((state.roomData.startedAt - Date.now()) / 1000))}` : '';
     const roadTrees = Array.from({ length: 18 }, (_, i) => `<span class="tr-tree" style="top:${(i * 12) % 100}%; left:${(i % 2 === 0 ? 8 : 82)}%; animation-delay:${(i * 0.12).toFixed(2)}s"></span>`).join('');
+    const isAccelerating = state._activeHoldAction === 'up';
+    const sceneStateClass = isAccelerating ? 'tr-scene-moving' : 'tr-scene-idle';
 
     let raceCars = '';
     const obstacles = state.roomData.obstacles || [];
@@ -1373,10 +1376,10 @@
         `).join('')}</div>` : '';
 
     return `
-      <div class="tr-race-scene">
+      <div class="tr-race-scene ${sceneStateClass}">
         <div class="tr-distance">DISTANCE: ${distanceDisplay}M</div>
         <div class="tr-speed-meter"><span>SPEED</span><strong>${speed}</strong></div>
-        <div class="tr-road-wrap">
+        <div class="tr-road-wrap ${sceneStateClass}">
           ${roadTrees}
           <div class="tr-road ${state.roomData.crashFlash ? 'tr-road-crash' : ''}">
             <div class="tr-road-line line-1"></div>
