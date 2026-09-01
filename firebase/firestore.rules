@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isOwnerOrGuest(userId) {
+      return request.auth.uid == userId || request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && isOwner(userId);
+      allow create: if isSignedIn() && isOwner(userId)
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() <= 12
+        && request.resource.data.avatar is string;
+      allow update: if isSignedIn() && isOwner(userId)
+        && (!('displayName' in request.resource.data) || (request.resource.data.displayName is string && request.resource.data.displayName.size() <= 12))
+        && (!('avatar' in request.resource.data) || request.resource.data.avatar is string);
+
+      match /saves/{saveId} {
+        allow read: if isSignedIn() && isOwner(userId);
+        allow write: if isSignedIn() && isOwner(userId)
+          && saveId == 'latest';
+      }
+
+      match /races/{raceId} {
+        allow read: if isSignedIn() && isOwner(userId);
+        allow create: if isSignedIn() && isOwner(userId)
+          && request.resource.data.mode is string
+          && (request.resource.data.mode == 'solo' || request.resource.data.mode == 'multiplayer')
+          && request.resource.data.score is number
+          && request.resource.data.score >= 0
+          && request.resource.data.won is boolean
+          && request.resource.data.crashed is boolean;
+        allow list: if isSignedIn() && isOwner(userId);
+      }
+    }
+
+    match /leaderboard/{mode} {
+      allow read: if true;
+
+      match /entries/{userId} {
+        allow read: if true;
+        allow write: if isSignedIn() && isOwnerOrGuest(userId)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() <= 12
+          && request.resource.data.score is number
+          && request.resource.data.score >= 0
+          && request.resource.data.mode is string
+          && (request.resource.data.mode == 'solo' || request.resource.data.mode == 'multiplayer');
+      }
+    }
+
+    match /assets/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

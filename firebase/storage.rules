@@ -1,0 +1,49 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isValidAvatar() {
+      return request.resource.contentType.matches('image/.*')
+        && request.resource.size < 2 * 1024 * 1024;
+    }
+
+    function isValidReplay() {
+      return request.resource.contentType.matches('(application/json|text/plain)')
+        && request.resource.size < 512 * 1024;
+    }
+
+    function isValidAsset() {
+      return request.resource.contentType.matches('(image/.*|audio/.*|application/octet-stream)')
+        && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    match /users/{userId}/avatars/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn() && isOwner(userId) && isValidAvatar();
+      allow delete: if isSignedIn() && isOwner(userId);
+    }
+
+    match /users/{userId}/races/{raceId}/replay.json {
+      allow read: if isSignedIn() && isOwner(userId);
+      allow write: if isSignedIn() && isOwner(userId) && isValidReplay();
+    }
+
+    match /game-assets/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.email_verified == true && isValidAsset();
+    }
+
+    match /{allPaths=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}

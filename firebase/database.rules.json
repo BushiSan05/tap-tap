@@ -1,0 +1,61 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "rooms": {
+      "$roomCode": {
+        ".read": "auth != null",
+        ".write": "auth != null && newData.exists()",
+        "$roomId": {
+          "code": { ".validate": "newData.isString() && newData.val().matches(/^[A-Z2-9]{4}$/)" },
+          "hostId": { ".validate": "newData.isString()" },
+          "phase": { ".validate": "newData.isString() && newData.val().matches(/^(lobby|countdown|racing|finished)$/)" },
+          "startedAt": { ".validate": "newData.isNumber() || newData.val() === null" },
+          "winnerId": { ".validate": "newData.isString() || newData.val() === null" },
+          "finishedRanked": { ".validate": "newData.hasChildren() || newData.val() === null" },
+          "createdAt": { ".validate": "newData.isNumber()" },
+          "updatedAt": { ".validate": "newData.isNumber()" },
+          "players": {
+            ".validate": "newData.hasChildren()",
+            "$playerId": {
+              "id": { ".validate": "newData.isString()" },
+              "uid": { ".validate": "newData.isString() && (newData.val() === auth.uid || auth.isAnonymous)" },
+              "name": { ".validate": "newData.isString() && newData.val().length <= 12" },
+              "avatar": { ".validate": "newData.isString()" },
+              "distance": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000" },
+              "lane": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 2" },
+              "finished": { ".validate": "newData.isBoolean()" },
+              "finishedAt": { ".validate": "newData.isNumber() || newData.val() === null" },
+              "$other": { ".validate": false }
+            }
+          },
+          "obstacles": { ".validate": true },
+          "rivalCars": { ".validate": true }
+        }
+      }
+    },
+
+    "leaderboard": {
+      "$mode": {
+        ".read": true,
+        "$userId": {
+          ".write": "auth != null && ($userId === auth.uid || auth.isAnonymous)",
+          "playerId": { ".validate": "newData.isString()" },
+          "uid": { ".validate": "newData.isString() && (newData.val() === auth.uid || auth.isAnonymous)" },
+          "name": { ".validate": "newData.isString() && newData.val().length <= 12" },
+          "avatar": { ".validate": "newData.isString()" },
+          "score": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "mode": { ".validate": "newData.isString() && (newData.val() === 'solo' || newData.val() === 'multiplayer')" },
+          "updatedAt": { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+
+    ".info": {
+      ".read": true,
+      ".write": false
+    }
+  }
+}
