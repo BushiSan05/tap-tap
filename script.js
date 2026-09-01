@@ -2,6 +2,7 @@
   'use strict';
 
   const AVATARS = ['🦊', '🐸', '🦁', '🐵', '🐼', '🐰', '🐨', '🐯'];
+  const TEST_APP_GUEST_MODE = true;
   const TRACK_GOAL = 1000;
   const LANE_COUNT = 3;
   const PLAYER_LIVES = 3;
@@ -106,7 +107,10 @@
     const hasSDK = !!(window.firebase && window.firebase.app);
     FB.ready = hasSDK && firebaseIsConfigured();
     if (!FB.ready) {
-      state.firebaseStatus = { connected: false, message: 'Firebase SDK unavailable.' };
+      state._offlineMode = true;
+      state.firebaseStatus = { connected: false, message: 'Offline mode: local play only.' };
+      state.screen = 'mode';
+      render();
       return;
     }
     try {
@@ -175,6 +179,19 @@
   }
 
   function routeAfterAuth() {
+    if (TEST_APP_GUEST_MODE) {
+      if (!state.user) {
+        state.user = { uid: uid(), isAnonymous: true };
+      }
+      if (state.screen === 'auth') {
+        state.screen = 'mode';
+      }
+      return;
+    }
+    if (!FB.ready) {
+      if (state.screen === 'auth') state.screen = 'mode';
+      return;
+    }
     if (state.screen === 'auth' && state.user) {
       state.screen = 'mode';
     } else if (!state.user && state.screen !== 'auth') {
@@ -1578,6 +1595,18 @@
   }, 160);
 
   (async function bootstrap() {
+    if (TEST_APP_GUEST_MODE) {
+      state.user = { uid: state.playerId, isAnonymous: true };
+      state.screen = 'mode';
+      render();
+      return;
+    }
+    if (!FB.ready) {
+      state._offlineMode = true;
+      state.screen = 'mode';
+      render();
+      return;
+    }
     if (FB.db && state.user) {
       await loadLeaderboard('solo');
       await loadLeaderboard('multiplayer');
